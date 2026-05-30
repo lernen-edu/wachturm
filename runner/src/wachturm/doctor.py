@@ -58,6 +58,65 @@ def _parse_major(version_text: str) -> int | None:
     return int(match.group(1)) if match else None
 
 
+def _is_wsl() -> bool:
+    try:
+        with open("/proc/version") as f:
+            return "microsoft" in f.read().lower()
+    except OSError:
+        return False
+
+
+def _compose_fix_hint() -> None:
+    if sys.platform == "darwin":
+        print("      Fix: mkdir -p ~/.docker/cli-plugins && \\")
+        print("           ln -sf /usr/local/cli-plugins/docker-compose ~/.docker/cli-plugins/docker-compose")
+        print("      Or:  brew install docker-compose")
+    elif _is_wsl():
+        print("      Fix: enable WSL integration in Docker Desktop (Settings → Resources → WSL Integration)")
+    else:
+        print("      Fix: sudo apt-get install docker-compose-plugin   # Debian/Ubuntu")
+        print("           See https://docs.docker.com/compose/install/ for other distros")
+
+
+def _buildx_fix_hint() -> None:
+    if sys.platform == "darwin":
+        print("      Fix: brew install docker-buildx && \\")
+        print("           ln -sf /opt/homebrew/opt/docker-buildx/bin/docker-buildx ~/.docker/cli-plugins/docker-buildx")
+    elif _is_wsl():
+        print("      Fix: enable WSL integration in Docker Desktop (Settings → Resources → WSL Integration)")
+    else:
+        print("      Fix: sudo apt-get install docker-buildx-plugin   # Debian/Ubuntu")
+        print("           Or upgrade to Docker Engine 23+ which includes buildx")
+
+
+def _daemon_fix_hint() -> None:
+    if shutil.which("colima"):
+        if _run(["colima", "status"]) is None:
+            print("FAIL  Docker daemon not reachable. Colima is not running.")
+            print("      Fix: colima start")
+            print("      For core+casemgmt (~12 GiB needed): colima stop && colima start --memory 14")
+        else:
+            print("FAIL  Docker daemon not reachable (Colima is running — socket path mismatch?).")
+    elif _is_wsl():
+        print("FAIL  Docker daemon not reachable. Start Docker Desktop and enable WSL integration.")
+        print("      Docker Desktop → Settings → Resources → WSL Integration → enable your distro")
+    elif sys.platform == "linux":
+        print("FAIL  Docker daemon not reachable.")
+        print("      Fix: sudo systemctl start docker")
+    else:
+        print("FAIL  Docker daemon not reachable. Is Docker Desktop running?")
+
+
+def _memory_fix_hint() -> None:
+    if shutil.which("colima"):
+        print("      Fix: colima stop && colima start --memory 14")
+    elif _is_wsl():
+        print("      Fix: Docker Desktop → Settings → Resources → Memory → set to 14 GB")
+        print("           Or add 'memory=14GB' to %USERPROFILE%\\.wslconfig and restart WSL")
+    elif sys.platform == "darwin":
+        print("      Fix: Docker Desktop → Settings → Resources → Memory → set to 14 GB")
+
+
 def run() -> int:
     """Print a pre-flight report. Return 0 if usable, 1 on a hard blocker."""
     print("Wachturm doctor — host pre-flight\n" + "-" * 40)
@@ -75,15 +134,7 @@ def run() -> int:
             print(f"OK    Docker: {docker_ver}")
 
         if _run(["docker", "info"]) is None:
-            if shutil.which("colima"):
-                if _run(["colima", "status"]) is None:
-                    print("FAIL  Docker daemon not reachable. Colima is not running.")
-                    print("      Fix: colima start")
-                    print("      For core+casemgmt (~12 GiB needed): colima stop && colima start --memory 14")
-                else:
-                    print("FAIL  Docker daemon not reachable (Colima is running — socket path mismatch?).")
-            else:
-                print("FAIL  Docker daemon not reachable. Is Docker Desktop running?")
+            _daemon_fix_hint()
             blockers += 1
         else:
             raw = _run(["docker", "info", "--format", "{{.MemTotal}}"])
@@ -91,8 +142,7 @@ def run() -> int:
                 dmem = _to_gib(int(raw))
                 if dmem < 12:
                     print(f"WARN  Docker memory: {dmem} GiB allocated (core+casemgmt needs ~12 GiB).")
-                    if shutil.which("colima"):
-                        print("      Fix: colima stop && colima start --memory 14")
+                    _memory_fix_hint()
                 else:
                     print(f"OK    Docker memory: {dmem} GiB")
 
@@ -103,8 +153,7 @@ def run() -> int:
         compose_ver = _run(["docker-compose", "version"])
         if compose_ver is None:
             print("FAIL  Docker Compose v2: not found ('docker compose' nor 'docker-compose').")
-            print("      Fix: mkdir -p ~/.docker/cli-plugins && \\")
-            print("           ln -sf /usr/local/cli-plugins/docker-compose ~/.docker/cli-plugins/docker-compose")
+            _compose_fix_hint()
             blockers += 1
         elif re.search(r"(?:^|\s)v?2\.", compose_ver):
             print(f"OK    Compose (standalone v2): {compose_ver}")
@@ -116,8 +165,7 @@ def run() -> int:
         print(f"OK    BuildKit: {buildx_ver}")
     else:
         print("FAIL  Docker BuildKit (buildx): not found.")
-        print("      Fix: brew install docker-buildx && \\")
-        print("           ln -sf /opt/homebrew/opt/docker-buildx/bin/docker-buildx ~/.docker/cli-plugins/docker-buildx")
+        _buildx_fix_hint()
         blockers += 1
 
     ram = _total_ram_bytes()

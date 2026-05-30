@@ -23,6 +23,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Notes
 - This Unreleased section accumulates work-in-progress changes between releases. Each `v*` tag moves entries from Unreleased into a numbered section below.
 
+## [0.9.7] — public evaluation pre-release
+
+### Fixed
+- `make doctor` fix hints are now platform-aware. Compose, BuildKit, daemon-not-reachable, and low-memory messages previously showed macOS/Homebrew-specific commands on all platforms. They now branch on macOS, Linux, and Windows+WSL2, giving correct instructions for each.
+
 ## [0.9.6] — public evaluation pre-release
 
 ### Fixed
