@@ -23,6 +23,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Notes
 - This Unreleased section accumulates work-in-progress changes between releases. Each `v*` tag moves entries from Unreleased into a numbered section below.
 
+## [0.9.11] — public evaluation pre-release
+
+### Fixed
+- iris-app health check changed from TCP port-open to a real HTTP probe (`curl http://127.0.0.1:8000/`) so `depends_on: condition: service_healthy` only passes when gunicorn workers are actually serving, preventing iris-nginx from starting prematurely and exhausting retries on 502s.
+- iris-nginx health check overridden in docker-compose.yml to add a 60 s `start_period`; the upstream image ships no grace period, causing spurious unhealthy marks during the gunicorn warm-up window.
+
 ## [0.9.10] — public evaluation pre-release
 
 ### Fixed

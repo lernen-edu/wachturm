@@ -501,8 +501,11 @@ services:
     # "API actually authenticates" readiness is asserted in P2-M1. The
     # long start_period covers the first-boot DB migration the entrypoint
     # runs (upstream ships NO healthcheck for this service).
+    # curl check (not just port-open): gunicorn binds the socket before
+    # workers are ready, so a TCP-only check passes while iris-nginx still
+    # gets 502s. A real HTTP probe gates depends_on correctly.
     healthcheck:
-      test: ["CMD", "python3", "-c", "import socket,sys; s=socket.socket(); s.settimeout(3); sys.exit(s.connect_ex(('127.0.0.1',8000)))"]
+      test: ["CMD-SHELL", "curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/ | grep -qE '^(200|302|301|401|403)'"]
       interval: 20s
       timeout: 10s
       retries: 30
@@ -601,9 +604,16 @@ services:
         condition: service_healthy
       iris-certs-generator:
         condition: service_completed_successfully
-    # No compose healthcheck override: the iriswebapp_nginx image ships
-    # its OWN HEALTHCHECK (curl -k https://127.0.0.1:${INTERFACE_HTTPS_PORT});
-    # compose surfaces it. Ordering is still gated on iris-app healthy.
+    # Override the image's built-in healthcheck to add a start_period.
+    # The upstream image checks curl -k https://127.0.0.1:8443/ with no
+    # grace period, so it can exhaust retries during the brief window
+    # between iris-app passing its TCP check and fully serving HTTP.
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sk -o /dev/null -w '%{http_code}' https://127.0.0.1:8443/ | grep -qE '^(200|302|301|401|403)'"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 60s
 
   cortex-es:
     profiles: ["casemgmt"]
