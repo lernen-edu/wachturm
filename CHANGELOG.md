@@ -23,6 +23,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Notes
 - This Unreleased section accumulates work-in-progress changes between releases. Each `v*` tag moves entries from Unreleased into a numbered section below.
 
+## [0.9.3] — public evaluation pre-release
+
+### Fixed
+- `make up-casemgmt` crashed with a bash arithmetic error when the Docker daemon was not running: `docker info` printed `0` to stdout then exited non-zero, causing `|| echo 0` to fire a second time and leaving `mem` as a two-line string that broke `$(( mem / 1073741824 ))`. Fixed by replacing the fallback with a regex guard.
+- `make doctor` falsely reported Docker Compose v2 as missing when the plugin was installed to a non-standard path (e.g. `/usr/local/cli-plugins/`). Fixed by falling back to `docker-compose version` and distinguishing v2 (OK), v1 (WARN), and truly absent (FAIL).
+
 ## [0.9.0] — public evaluation pre-release
 
 The complete v1.0 product, published to the public repo so external

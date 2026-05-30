@@ -75,11 +75,17 @@ def run() -> int:
             print(f"OK    Docker: {docker_ver}")
 
     compose_ver = _run(["docker", "compose", "version"])
-    if compose_ver is None:
-        print("FAIL  Docker Compose v2: not found ('docker compose').")
-        blockers += 1
-    else:
+    if compose_ver is not None:
         print(f"OK    Compose: {compose_ver}")
+    else:
+        compose_ver = _run(["docker-compose", "version"])
+        if compose_ver is None:
+            print("FAIL  Docker Compose v2: not found ('docker compose' nor 'docker-compose').")
+            blockers += 1
+        elif re.search(r"(?:^|\s)v?2\.", compose_ver):
+            print(f"OK    Compose (standalone v2): {compose_ver}")
+        else:
+            print(f"WARN  Compose (standalone): {compose_ver} — looks like v1; upgrade recommended.")
 
     ram = _total_ram_bytes()
     if ram is None:

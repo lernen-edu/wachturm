@@ -42,7 +42,8 @@ up: ## [Phase 1] Bring up the core profile (Wazuh + victims + attacker + portal)
 	@echo "core profile healthy. Portal: http://localhost:8000  ·  next: make scenario SCN=SCN-001"
 
 up-casemgmt: ## [Phase 2] Bring up core + casemgmt (DFIR-IRIS + Cortex)
-	@mem=$$(docker info --format '{{.MemTotal}}' 2>/dev/null || echo 0); \
+	@mem=$$(docker info --format '{{.MemTotal}}' 2>/dev/null); \
+		[[ "$$mem" =~ ^[0-9]+$$ ]] || mem=0; \
 		gib=$$(( mem / 1073741824 )); \
 		if [ "$$gib" -gt 0 ] && [ "$$gib" -lt 12 ]; then \
 		  echo "WARN  Docker is allocated ~$$gib GiB. core+casemgmt needs ~10 GiB"; \
