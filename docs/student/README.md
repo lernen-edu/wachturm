@@ -4,6 +4,8 @@ Welcome to Wachturm. You're going to learn what Tier 1 SOC analysts actually do.
 
 These docs are for you, the learner. Read them in order if you're starting from zero. Skip around if you know what you're after.
 
+> **On Windows?** Set up WSL2 + Docker Desktop first — see **[Running Wachturm on Windows](windows-setup.md)**. After that, everything below works exactly the same.
+
 ## Read in this order
 
 1. **[Orientation](01-orientation.md)** — what Wachturm is, what tools are connected to what, where to look for things. *5 minutes.*

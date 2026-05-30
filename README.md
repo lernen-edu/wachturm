@@ -44,6 +44,8 @@ From a clean clone to your first triaged alert in the portal:
 
 > **Requires:** Docker 24.x, Docker Compose v2, **16 GB RAM recommended** (the full v1.0 loop — Wazuh + DFIR-IRIS + Cortex — needs ~9.5 GB; 8 GB only fits the Wazuh-only `core` profile), 40 GB disk. The first start builds images and can take several minutes; subsequent starts are quick.
 
+> **Platform:** macOS and Linux run the commands below as-is. **On Windows**, use WSL2 + Docker Desktop and run everything inside the Ubuntu (WSL2) shell — see [`docs/student/windows-setup.md`](docs/student/windows-setup.md).
+
 ```bash
 git clone https://github.com/lernen-edu/wachturm
 cd wachturm
