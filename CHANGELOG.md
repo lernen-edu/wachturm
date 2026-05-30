@@ -23,6 +23,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Notes
 - This Unreleased section accumulates work-in-progress changes between releases. Each `v*` tag moves entries from Unreleased into a numbered section below.
 
+## [0.9.4] — public evaluation pre-release
+
+### Fixed
+- `make doctor` now prints the symlink fix command when Docker Compose v2 is not found, so users with the plugin installed to a non-standard path (e.g. `/usr/local/cli-plugins/`) know exactly how to resolve it.
+
 ## [0.9.3] — public evaluation pre-release
 
 ### Fixed

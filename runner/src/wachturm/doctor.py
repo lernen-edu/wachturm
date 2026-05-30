@@ -81,6 +81,8 @@ def run() -> int:
         compose_ver = _run(["docker-compose", "version"])
         if compose_ver is None:
             print("FAIL  Docker Compose v2: not found ('docker compose' nor 'docker-compose').")
+            print("      Fix: mkdir -p ~/.docker/cli-plugins && \\")
+            print("           ln -sf /usr/local/cli-plugins/docker-compose ~/.docker/cli-plugins/docker-compose")
             blockers += 1
         elif re.search(r"(?:^|\s)v?2\.", compose_ver):
             print(f"OK    Compose (standalone v2): {compose_ver}")
