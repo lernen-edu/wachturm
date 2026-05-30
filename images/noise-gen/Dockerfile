@@ -8,7 +8,7 @@
 # (no egress) with a fixed pinned IP that SM5 scenarios exclude.
 #
 # Implements images/noise-gen/README.md (the binding design contract).
-FROM debian:12-slim@sha256:2749ca60ffb3c42de053229d7967d292d7dad1067936b38995da0bbfb96c4c23
+FROM debian:12-slim@sha256:0104b334637a5f19aa9c983a91b54c89887c0984081f2068983107a6f6c21eeb
 
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \

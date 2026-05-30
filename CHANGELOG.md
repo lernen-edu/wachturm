@@ -23,6 +23,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Notes
 - This Unreleased section accumulates work-in-progress changes between releases. Each `v*` tag moves entries from Unreleased into a numbered section below.
 
+## [0.9.9] — public evaluation pre-release
+
+### Fixed
+- `debian:12-slim` digest in `attacker` and `noise-gen` Dockerfiles updated from the stale amd64-specific manifest (`sha256:2749ca60…`) to the current multi-arch manifest list (`sha256:0104b334…`). The old digest had been removed from the registry and caused amd64 platform warnings on arm64 hosts.
+- Added `platform: linux/amd64` to `wazuh-indexer`, `wazuh-manager`, `wazuh-dashboard`, and `cortex` in `docker-compose.yml`. These upstream images are amd64-only; the explicit directive silences the platform mismatch warning on arm64 hosts and documents the emulation requirement.
+
 ## [0.9.8] — public evaluation pre-release
 
 ### Fixed

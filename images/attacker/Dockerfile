@@ -17,7 +17,7 @@
 # no mgmt/host network — egress isolation is proven empirically in SM4.
 
 # ----- ART fetch stage (needs git + network at BUILD only) -----------
-FROM debian:12-slim@sha256:2749ca60ffb3c42de053229d7967d292d7dad1067936b38995da0bbfb96c4c23 AS art-fetch
+FROM debian:12-slim@sha256:0104b334637a5f19aa9c983a91b54c89887c0984081f2068983107a6f6c21eeb AS art-fetch
 
 ARG ART_REPO=https://github.com/redcanaryco/atomic-red-team.git
 # Pin: redcanaryco/atomic-red-team @ master HEAD as of 2026-05-12.
@@ -38,7 +38,7 @@ RUN git clone --filter=blob:none --no-checkout "${ART_REPO}" /opt/atomic-red-tea
  && rm -rf /opt/atomic-red-team/.git
 
 # ----- final attacker image ------------------------------------------
-FROM debian:12-slim@sha256:2749ca60ffb3c42de053229d7967d292d7dad1067936b38995da0bbfb96c4c23
+FROM debian:12-slim@sha256:0104b334637a5f19aa9c983a91b54c89887c0984081f2068983107a6f6c21eeb
 
 LABEL org.wachturm.art.repo="https://github.com/redcanaryco/atomic-red-team" \
       org.wachturm.art.sha="37400ed636536ef87a36c9b4ef4ac49564ba6b06" \

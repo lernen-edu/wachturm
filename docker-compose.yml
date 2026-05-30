@@ -106,6 +106,7 @@ services:
 
   wazuh-indexer:
     profiles: ["core"]
+    platform: linux/amd64   # Wazuh publishes amd64 only; runs under emulation on arm64
     image: wazuh/wazuh-indexer:4.9.2
     container_name: wazuh-indexer
     hostname: wazuh.indexer            # official TLS identity (cert SAN)
@@ -139,6 +140,7 @@ services:
 
   wazuh-manager:
     profiles: ["core"]
+    platform: linux/amd64   # Wazuh publishes amd64 only; runs under emulation on arm64
     image: wazuh/wazuh-manager:4.9.2
     container_name: wazuh-manager
     hostname: wazuh.manager            # official TLS identity (cert SAN)
@@ -194,6 +196,7 @@ services:
 
   wazuh-dashboard:
     profiles: ["core"]
+    platform: linux/amd64   # Wazuh publishes amd64 only; runs under emulation on arm64
     image: wazuh/wazuh-dashboard:4.9.2
     container_name: wazuh-dashboard
     hostname: wazuh.dashboard          # official TLS identity (cert SAN)
@@ -629,6 +632,7 @@ services:
 
   cortex:
     profiles: ["casemgmt"]
+    platform: linux/amd64   # TheHive/Cortex publishes amd64 only; runs under emulation on arm64
     image: thehiveproject/cortex:3.1.8
     container_name: cortex
     restart: unless-stopped
