@@ -136,7 +136,7 @@ services:
       interval: 20s
       timeout: 10s
       retries: 18
-      start_period: 120s
+      start_period: 300s
 
   wazuh-manager:
     profiles: ["core"]
@@ -192,7 +192,7 @@ services:
       interval: 20s
       timeout: 10s
       retries: 18
-      start_period: 120s
+      start_period: 300s
 
   wazuh-dashboard:
     profiles: ["core"]
@@ -235,7 +235,7 @@ services:
       interval: 20s
       timeout: 10s
       retries: 18
-      start_period: 120s
+      start_period: 300s
 
   suricata:
     profiles: ["core"]
@@ -506,7 +506,7 @@ services:
       interval: 20s
       timeout: 10s
       retries: 30
-      start_period: 180s
+      start_period: 360s
 
   iris-worker:
     profiles: ["casemgmt"]
@@ -628,7 +628,7 @@ services:
       interval: 20s
       timeout: 10s
       retries: 24
-      start_period: 60s
+      start_period: 180s
 
   cortex:
     profiles: ["casemgmt"]

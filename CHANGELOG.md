@@ -23,6 +23,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Notes
 - This Unreleased section accumulates work-in-progress changes between releases. Each `v*` tag moves entries from Unreleased into a numbered section below.
 
+## [0.9.10] — public evaluation pre-release
+
+### Fixed
+- `make up` and `make up-casemgmt` `--wait-timeout` increased from 600 s / 900 s to 1200 s / 1800 s. Under arm64 emulation OpenSearch can take 5–10 minutes to initialise; the prior values caused spurious timeout failures requiring multiple retries.
+- `start_period` raised for wazuh-indexer, wazuh-manager, wazuh-dashboard (120 s → 300 s), iris-app (180 s → 360 s), and cortex-es (60 s → 180 s) to prevent services from being marked unhealthy before emulation-slowed init completes.
+- Added `make install` target that creates `.venv` and installs the runner; `make up-casemgmt` now auto-creates the venv on first run so the iris-bootstrap / cortex-bootstrap Python steps succeed on a fresh clone.
+
 ## [0.9.9] — public evaluation pre-release
 
 ### Fixed

@@ -24,7 +24,12 @@ help: ## Show this help (lists every target and what it does)
 doctor: ## Check Docker, Compose, and host resources
 	@python3 runner/src/wachturm/doctor.py
 
-test: ## Run the Python test suite (needs: pip install -e runner[dev])
+install: ## Create .venv and install the runner (required before make up-casemgmt on a fresh clone)
+	python3 -m venv "$(CURDIR)/.venv"
+	"$(CURDIR)/.venv/bin/pip" install -e "$(CURDIR)/runner" --quiet
+	@echo "Runner installed in .venv. Run 'source .venv/bin/activate' to use it interactively."
+
+test: ## Run the Python test suite (needs: make install or pip install -e runner[dev])
 	@if [ -x "$(CURDIR)/.venv/bin/python" ]; then PY="$(CURDIR)/.venv/bin/python"; else PY=python3; fi; \
 		cd runner && "$$PY" -m pytest
 
@@ -38,7 +43,7 @@ check: ## Run the full CI gate locally — ruff + mypy --strict + pytest, same s
 # ─── Stubs — implemented in a later phase (BUILD_ORDER.md) ────────────
 
 up: ## [Phase 1] Bring up the core profile (Wazuh + victims + attacker + portal)
-	docker compose --profile core up -d --build --wait --wait-timeout 600
+	docker compose --profile core up -d --build --wait --wait-timeout 1200
 	@echo "core profile healthy. Portal: http://localhost:8000  ·  next: make scenario SCN=SCN-001"
 
 up-casemgmt: ## [Phase 2] Bring up core + casemgmt (DFIR-IRIS + Cortex)
@@ -56,8 +61,13 @@ up-casemgmt: ## [Phase 2] Bring up core + casemgmt (DFIR-IRIS + Cortex)
 	@# the wazuh-to-iris bind-mount source); drop any stale token so the
 	@# watcher waits for THIS lab's fresh one, not a previous lab's.
 	@mkdir -p "$$HOME/.wachturm" && chmod 700 "$$HOME/.wachturm" && rm -f "$$HOME/.wachturm/iris.token"
-	docker compose --profile core --profile casemgmt up -d $(if $(NO_BUILD),,--build) --wait --wait-timeout 900
+	docker compose --profile core --profile casemgmt up -d $(if $(NO_BUILD),,--build) --wait --wait-timeout 1800
 	@echo "core + casemgmt healthy — bootstrapping the IRIS API token…"
+	@if [ ! -x "$(CURDIR)/.venv/bin/python" ]; then \
+	  echo "→ first run: creating .venv and installing runner…"; \
+	  python3 -m venv "$(CURDIR)/.venv" && \
+	  "$(CURDIR)/.venv/bin/pip" install -e "$(CURDIR)/runner" --quiet; \
+	fi
 	@if [ -x "$(CURDIR)/.venv/bin/python" ]; then PY="$(CURDIR)/.venv/bin/python"; else PY=python3; fi; \
 		cd runner && PYTHONPATH=src "$$PY" -m wachturm iris-bootstrap
 	@# Cortex bootstrap is idempotent (skips when ~/.wachturm/cortex.token
