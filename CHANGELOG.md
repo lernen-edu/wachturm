@@ -23,6 +23,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Notes
 - This Unreleased section accumulates work-in-progress changes between releases. Each `v*` tag moves entries from Unreleased into a numbered section below.
 
+## [0.9.5] — public evaluation pre-release
+
+### Fixed
+- `make doctor` now checks Docker daemon reachability; if Colima is installed but stopped it prints `colima start` (and the `--memory 14` variant for the casemgmt stack).
+- `make doctor` now checks Docker VM memory allocation and warns when it is below the 12 GiB needed for `core+casemgmt`, with the Colima fix command.
+- `make doctor` now checks for the Docker BuildKit plugin (`docker buildx`) and prints the `brew install docker-buildx` fix when missing, preventing the `COPY --chmod` build error.
+
 ## [0.9.4] — public evaluation pre-release
 
 ### Fixed

@@ -74,6 +74,28 @@ def run() -> int:
         else:
             print(f"OK    Docker: {docker_ver}")
 
+        if _run(["docker", "info"]) is None:
+            if shutil.which("colima"):
+                if _run(["colima", "status"]) is None:
+                    print("FAIL  Docker daemon not reachable. Colima is not running.")
+                    print("      Fix: colima start")
+                    print("      For core+casemgmt (~12 GiB needed): colima stop && colima start --memory 14")
+                else:
+                    print("FAIL  Docker daemon not reachable (Colima is running — socket path mismatch?).")
+            else:
+                print("FAIL  Docker daemon not reachable. Is Docker Desktop running?")
+            blockers += 1
+        else:
+            raw = _run(["docker", "info", "--format", "{{.MemTotal}}"])
+            if raw and raw.isdigit():
+                dmem = _to_gib(int(raw))
+                if dmem < 12:
+                    print(f"WARN  Docker memory: {dmem} GiB allocated (core+casemgmt needs ~12 GiB).")
+                    if shutil.which("colima"):
+                        print("      Fix: colima stop && colima start --memory 14")
+                else:
+                    print(f"OK    Docker memory: {dmem} GiB")
+
     compose_ver = _run(["docker", "compose", "version"])
     if compose_ver is not None:
         print(f"OK    Compose: {compose_ver}")
@@ -88,6 +110,15 @@ def run() -> int:
             print(f"OK    Compose (standalone v2): {compose_ver}")
         else:
             print(f"WARN  Compose (standalone): {compose_ver} — looks like v1; upgrade recommended.")
+
+    buildx_ver = _run(["docker", "buildx", "version"])
+    if buildx_ver is not None:
+        print(f"OK    BuildKit: {buildx_ver}")
+    else:
+        print("FAIL  Docker BuildKit (buildx): not found.")
+        print("      Fix: brew install docker-buildx && \\")
+        print("           ln -sf /opt/homebrew/opt/docker-buildx/bin/docker-buildx ~/.docker/cli-plugins/docker-buildx")
+        blockers += 1
 
     ram = _total_ram_bytes()
     if ram is None:
