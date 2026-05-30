@@ -1,0 +1,108 @@
+schema_version: "1.0"
+id: SCN-002
+name: "Recurring SSH brute-force alert — vic-jump"
+description: >
+  Wazuh raised an SSH brute-force alert cluster on the jump host
+  vic-jump: a burst of failed authentications against the admin account
+  from a single source IP during a scheduled overnight window, tripping
+  the same brute-force rules as SCN-001. Triage and disposition.
+author: "Wachturm Contributors"
+created: 2026-05-17
+difficulty: easy
+category: benign_admin
+expected_verdict: false_positive
+# No mitre block: this is authorized security operations, not an
+# adversary technique. (The rules that fire still carry T1110.001 in
+# their own metadata — a deliberate teaching point: a rule's ATT&CK tag
+# describes the *signature*, not the *verdict*.)
+duration_minutes: 4
+tags: [ssh, false-positive, vuln-scan, beginner]
+
+setup:
+  - actor: vic-jump
+    command: "id admin >/dev/null 2>&1 || (useradd -m -s /bin/bash admin && echo 'admin:Sup3rs3cret!' | chpasswd)"
+    description: "Ensure the target 'admin' account exists (the scan probes it with a stale credential)"
+
+steps:
+  - actor: atk-kali
+    description: "Scanner service-discovery sweep against the jump host (scan profile, step 1)"
+    command: "nmap -Pn -p 22 --script ssh2-enum-algos 10.50.10.30 || true"
+    delay_seconds: 0
+    timeout_seconds: 45
+
+  - actor: atk-kali
+    # The authenticated-scan credential probe. A real VA scanner (Nessus
+    # /Qualys/Tenable) tries its configured scan account; here that
+    # credential is stale, so every attempt FAILS — no success, and the
+    # scanner never runs post-auth commands. This is the whole FP: same
+    # 5760/5763 signature as SCN-001's brute force, but no 40112 because
+    # nothing authenticated, and no recon because it is a scanner.
+    description: "Authenticated-scan credential probe with the (stale) scan account — all fail"
+    command: "printf '%s\\n' scan-old1 scan-old2 scan-old3 scan-old4 scan-old5 scan-old6 scan-old7 scan-old8 scan-old9 scan-old10 scan-old11 scan-old12 > /tmp/scancreds.txt && hydra -l admin -P /tmp/scancreds.txt -t 4 ssh://10.50.10.30 ; true"
+    delay_seconds: 6
+    timeout_seconds: 120
+
+# Observed in the lab (Probe 1, 2026-05-17): a 12-attempt no-success
+# burst fires 5760 (~x11) and 5763 (x1) but NOT 40112 — there is no
+# successful authentication to correlate. The ABSENCE of 40112 is the
+# load-bearing evidence for the FP verdict; it cannot be an
+# expected_alert (you can't assert a negative here) so the instructor
+# doc makes "confirm 40112 did NOT fire" an explicit triage step.
+expected_alerts:
+  - rule_id: 5760
+    description: "sshd: authentication failed"
+    minimum_count: 5
+    timeframe_seconds: 180
+  - rule_id: 5763
+    description: "sshd: brute force trying to get access to the system"
+    minimum_count: 1
+    timeframe_seconds: 180
+
+expected_observables:
+  - type: ip
+    value: "10.50.10.250"
+  - type: hostname
+    value: "vic-jump"
+  - type: user
+    value: "admin"
+
+hints:
+  - "Walk the ENTIRE alert cluster, not just the first few. Does it end the way SCN-001's did — with a 'multiple failures followed by a success' correlation — or does it just stop at failures?"
+  - "Was there ever a successful authentication? Was a single command run on vic-jump after the burst? What does the answer tell you about whether anything was actually compromised?"
+  - "This source and timing line up with a scheduled, documented activity referenced in the ticket. Where would you confirm that, and what is your disposition if the activity is authorized AND nothing succeeded?"
+
+answer_key:
+  verdict: false_positive
+  severity: low
+  confidence: high
+  required_observables:
+    - type: ip
+      value: "10.50.10.250"
+      role: source
+    - type: hostname
+      value: "vic-jump"
+      role: target
+    - type: user
+      value: "admin"
+      role: target
+  summary_keywords:
+    - any_of: ["authorized", "scheduled", "vulnerability scan", "vuln scan", "sanctioned"]
+    - any_of: ["no successful", "no success", "no compromise", "no 40112", "did not authenticate", "no post-auth"]
+  next_steps:
+    - close_false_positive
+    - document_authorized_scanner
+    - tune_detection
+  reasoning: >
+    The failed-auth burst from 10.50.10.250 against vic-jump trips the
+    same 5760/5763 signature as a real brute force, but two facts make
+    this a false positive: (1) no authentication ever succeeded — Wazuh's
+    compromise-correlation rule 40112 did NOT fire, and there is no
+    post-auth activity on vic-jump; (2) the source, timing, and profile
+    match the documented scheduled authenticated vulnerability scan
+    referenced in the ticket. The correct disposition is to close as a
+    false positive, document the scanner as authorized, and recommend
+    detection tuning (allowlist the scan window/host) to reduce recurring
+    alert fatigue — NOT to escalate. Note the discipline: "authorized" is
+    only safe to conclude AFTER verifying nothing actually succeeded; an
+    authorized scan that coincided with a real compromise would still be
+    an incident.

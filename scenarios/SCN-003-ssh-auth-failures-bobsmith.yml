@@ -1,0 +1,115 @@
+schema_version: "1.0"
+id: SCN-003
+name: "SSH authentication failures then success — bobsmith / vic-jump"
+description: >
+  Wazuh logged several failed SSH authentications for the bobsmith
+  account on the jump host vic-jump from a single source IP, followed by
+  one successful authentication for that same account from that same
+  source. No other alerts are associated with the cluster. Triage and
+  disposition.
+author: "Wachturm Contributors"
+created: 2026-05-17
+difficulty: easy
+category: benign_user
+expected_verdict: benign
+# No mitre block: this is ordinary user error, not adversary behavior.
+duration_minutes: 4
+tags: [ssh, benign, user-error, beginner]
+
+setup:
+  - actor: vic-jump
+    # bobsmith is a scenario-owned account. SCN-003 deliberately does
+    # NOT use 'analyst' — noise-gen owns 'analyst' for benign
+    # successful-login noise; hijacking its password breaks noise-gen's
+    # zero-failure invariant and contaminates Wazuh correlation state.
+    # See images/noise-gen/README.md (account-exclusion contract).
+    command: "id bobsmith >/dev/null 2>&1 || useradd -m -s /bin/bash bobsmith; echo 'bobsmith:Sup3rs3cret!' | chpasswd"
+    description: "Ensure the legitimate 'bobsmith' account exists with its known password"
+
+steps:
+  - actor: atk-kali
+    # The user's own workstation in this scenario's narrative (the lab's
+    # only SSH-capable host; see instructor note on the shared source
+    # IP). Six WRONG passwords at human cadence (~3s apart) — a person
+    # fumbling, not a tool hammering. No -t parallelism, no wordlist.
+    description: "User mistypes their password six times (human cadence)"
+    command: "for i in 1 2 3 4 5 6; do sshpass -p \"Wr0ngTypo$i\" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=8 bobsmith@10.50.10.30 true 2>/dev/null; sleep 3; done; true"
+    delay_seconds: 0
+    timeout_seconds: 90
+
+  - actor: atk-kali
+    # They pause, realize Caps Lock / wrong saved cred, type it
+    # correctly, log in — and do NOTHING else. No recon, no lateral.
+    # The absence of post-auth activity is load-bearing benign evidence.
+    description: "User gets the password right and logs in (no further activity)"
+    command: "sshpass -p 'Sup3rs3cret!' ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null bobsmith@10.50.10.30 'true'"
+    delay_seconds: 8
+    timeout_seconds: 30
+
+# Observed in the lab (Probe 2, 2026-05-17, srcip-isolated): a
+# 6-failure human-paced burst + 1 success fires 5760 (the mistypes,
+# ~x6) and 5715 (the success, x1) but NOT 5763 and NOT 40112 — the
+# volume is below the brute-force threshold and Wazuh's own
+# compromise-correlation does not consider this a compromise. Their
+# ABSENCE is the benign discriminator (you cannot assert a negative;
+# the instructor doc makes "confirm 5763/40112 did NOT fire" a triage
+# step). bobsmith is scenario-owned and untouched by noise-gen, so this
+# signal is clean and deterministic — unlike 'analyst', which noise-gen
+# floods with benign successful logins.
+expected_alerts:
+  - rule_id: 5760
+    description: "sshd: authentication failed (the user's mistypes)"
+    minimum_count: 5
+    timeframe_seconds: 180
+  - rule_id: 5715
+    description: "sshd: authentication success (the user finally gets in)"
+    minimum_count: 1
+    timeframe_seconds: 240
+
+expected_observables:
+  - type: ip
+    value: "10.50.10.250"
+  - type: hostname
+    value: "vic-jump"
+  - type: user
+    value: "bobsmith"
+
+hints:
+  - "Count the failures from this user's source before the success. Is this the sustained, high-rate volume of SCN-001, or a handful?"
+  - "Did the brute-force rule (5763) or the 'multiple failures followed by a success' correlation (40112) fire for this activity? If Wazuh's own correlation didn't call it a compromise, what is it telling you?"
+  - "Whose account is this, from where, and what did they do after logging in? Weigh a legitimate user, low volume, no post-auth activity — and remember not every 'fail then success' is an attack."
+
+answer_key:
+  verdict: benign
+  severity: low
+  confidence: medium
+  required_observables:
+    - type: ip
+      value: "10.50.10.250"
+      role: source
+    - type: hostname
+      value: "vic-jump"
+      role: target
+    - type: user
+      value: "bobsmith"
+      role: subject
+  summary_keywords:
+    - any_of: ["typo", "mistyped", "fat-finger", "fat finger", "user error", "password error", "caps lock"]
+    - any_of: ["benign", "legitimate user", "no compromise", "low volume", "no brute force", "no 40112", "no post-auth"]
+  next_steps:
+    - close_benign
+    - document
+    - advise_user
+  reasoning: >
+    Six failed SSH authentications for the legitimate 'bobsmith' account
+    from a single source, followed by one success and NO subsequent
+    activity. Unlike SCN-001 this is benign: the volume is low and did
+    not trip the brute-force rule (5763); Wazuh's compromise-correlation
+    rule (40112) did NOT fire; the account is a known legitimate user;
+    and there is no post-authentication recon or lateral movement. This
+    is ordinary human error (Caps Lock / a stale saved credential after a
+    rotation). Correct disposition: close as benign, document, optionally
+    advise the user. Confidence is medium, not high: a benign verdict
+    here rests partly on the ABSENCE of malicious follow-on, which is
+    weaker evidence than a positive indicator — a calibration point
+    students should internalize.

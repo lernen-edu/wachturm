@@ -1,0 +1,62 @@
+# .github/workflows/ci.yml
+#
+# Phase 0 continuous integration. Two independent jobs:
+#   - compose: `docker compose config` validates the compose file for
+#     every profile (core, casemgmt, soar, intel). No containers run.
+#   - python:  ruff (lint + format), mypy --strict, and pytest on runner/.
+#
+# ubuntu-latest only; Python pinned to the project floor (3.11) so we
+# catch 3.11-incompatible syntax. Distinct from codeql.yml,
+# container-scan.yml, and promote-release.yml.
+
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+permissions:
+  contents: read
+
+jobs:
+  compose:
+    name: Validate docker compose (all profiles)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Provide .env from template
+        run: cp .env.example .env
+      - name: Validate each profile
+        run: |
+          for profile in core casemgmt soar intel; do
+            echo "::group::docker compose --profile $profile config"
+            docker compose --profile "$profile" config -q
+            echo "::endgroup::"
+          done
+
+  python:
+    name: Lint, type-check, test (runner)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Install runner (with dev extras)
+        run: pip install -e "runner[dev]"
+      - name: Ruff lint
+        run: ruff check runner/
+      - name: Ruff format check
+        run: ruff format --check runner/
+      - name: Mypy (strict)
+        run: mypy --strict runner/
+      - name: Pytest
+        run: pytest
+        working-directory: runner
+      - name: Scenario validate (all YAMLs parse)
+        run: python -m wachturm validate scenarios
+      - name: Scenario trio + no-spoiler enforcement (BUILD_ORDER §3a DoD)
+        run: pytest tests/test_scenario_trio.py tests/test_scenario_lint.py -q
+        working-directory: runner

@@ -1,0 +1,9 @@
+123456
+password
+admin
+root
+letmein
+qwerty
+admin123
+Password1
+Sup3rs3cret!

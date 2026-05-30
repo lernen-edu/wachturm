@@ -1,0 +1,23 @@
+# Wachturm pre-commit hooks (AGENTS.md §4 / Phase 0).
+#
+# Install once:  pip install -e runner[dev] && pre-commit install
+# Run on demand: pre-commit run --all-files
+#
+# Hook revs are pinned (AGENTS.md §1.5). Bump them deliberately with
+# `pre-commit autoupdate`, never silently.
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-added-large-files
+        args: ["--maxkb=1024"]
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.13
+    hooks:
+      - id: ruff-check
+        args: ["--fix"]
+      - id: ruff-format

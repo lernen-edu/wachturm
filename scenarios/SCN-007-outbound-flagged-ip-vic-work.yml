@@ -1,0 +1,98 @@
+schema_version: "1.0"
+id: SCN-007
+name: "Outbound connection to a threat-flagged IP — vic-work"
+description: >
+  Suricata raised an alert for an outbound connection from the
+  workstation vic-work to an external IP that its ruleset flags as a
+  known anonymizer/exit node. Triage and disposition.
+author: "Wachturm Contributors"
+created: 2026-05-18
+category: command_and_control
+expected_verdict: true_positive
+mitre:
+  - T1090.003
+  - T1571
+difficulty: easy
+duration_minutes: 2
+tags: [network, suricata, tor, c2, beginner]
+
+# No setup. The sealed lab's attacker/victim nets are internal:true
+# (HARD RULE — no real egress), and a bridge-sidecar Suricata cannot
+# capture peer unicast (P3a spike A). So the scenario emits the EVE
+# alert the simulated outbound connection WOULD have produced, into the
+# eve.json the Wazuh manager already ingests (same synthetic-source
+# model as vic-dc / SCN-001's generated auth.log). The detection,
+# decode, correlation, case and
+# triage are all real; only the packet source is simulated.
+steps:
+  - actor: suricata
+    description: "NIDS flags an outbound connection from vic-work to a known exit node"
+    # SUSTAINED ~120s (the SCN-010-proven robustness pattern). On a
+    # freshly-built lab the Wazuh manager's logcollector takes a startup
+    # window to settle on /var/log/suricata/eve.json (it logs "Could not
+    # open ... No such file" then "Analyzing file"); a single burst lands
+    # in that unsettled window and is never decoded. Emitting over a long
+    # window guarantees alerts land AFTER logcollector is reading, and is
+    # realistic of repeated beacon/connection attempts.
+    command: >-
+      sh -c 'for i in $(seq 1 24); do
+      wachturm-emit-eve --src 10.50.10.20 --dest 198.51.100.66
+      --dest-port 9001 --proto TCP --severity 1 --count 1
+      --category "A Network Trojan was detected"
+      --signature "ET TOR Known Tor Exit Node Traffic group 1"
+      --sid 2520000; sleep 5; done'
+    delay_seconds: 0
+    timeout_seconds: 180
+
+# Real id derived from the live gate (SCN-010 lesson — Wazuh's bundled
+# 0475-suricata ruleset turns an eve.json event_type:alert into ~86601
+# "Suricata: Alert"; the gate confirms/corrects this).
+expected_alerts:
+  - rule_id: 86601
+    description: "Suricata: Alert - ET TOR Known Tor Exit Node Traffic"
+    minimum_count: 1
+    timeframe_seconds: 240
+
+expected_observables:
+  - type: ip
+    value: "198.51.100.66"
+  - type: ip
+    value: "10.50.10.20"
+
+hints:
+  - "Read the Suricata signature in the alert. What does the ruleset say this destination IP is?"
+  - "Which host initiated this, and to what? Pull the destination IP into Cortex / your threat-intel and read what the signature category says."
+  - "A workstation reaching a known anonymizer/exit node outbound is not normal user traffic. What does deliberate outbound to known-bad infrastructure indicate, and how is it dispositioned?"
+
+answer_key:
+  verdict: true_positive
+  severity: medium
+  confidence: high
+  required_observables:
+    - type: ip
+      value: "198.51.100.66"
+      role: destination
+    - type: ip
+      value: "10.50.10.20"
+      role: source
+  summary_keywords:
+    - any_of: ["tor", "exit node", "anonymizer", "known-bad", "threat intel", "flagged ip", "known bad"]
+    - any_of: ["outbound", "command and control", "c2", "beacon", "exfiltration", "escalate", "policy violation"]
+  next_steps:
+    - block_destination
+    - isolate_endpoint
+    - escalate_t2
+  reasoning: >
+    Suricata's ruleset flagged an outbound connection from the
+    workstation vic-work (10.50.10.20) to 198.51.100.66, a known
+    Tor exit node ("ET TOR Known Tor Exit Node Traffic"). A workstation
+    initiating outbound to known anonymizer/exit-node infrastructure is
+    not normal user activity — it is a strong indicator of C2,
+    exfiltration staging, or at minimum a serious policy violation. The
+    signature itself is the threat-intel hit; the verdict is reachable
+    from a single alert once the analyst reads the signature and the
+    destination. True positive. Severity medium (a strong indicator
+    pending confirmation of what the channel carried; defensibly high if
+    treated as confirmed C2). Confidence high (the signature is an
+    unambiguous IOC). Disposition: block the destination, isolate/scan
+    vic-work, escalate to Tier 2 to scope the channel.

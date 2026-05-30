@@ -1,0 +1,783 @@
+# Wachturm — Docker Compose
+#
+# Profiles:
+#   core      — Wazuh, Suricata, victims, attacker, noise generator  (Phase 1)
+#   casemgmt  — DFIR-IRIS + Cortex                                   (Phase 2)
+#   soar      — Shuffle                                              (Phase 4)
+#   intel     — MISP                                                 (Phase 4)
+#
+# Common runs:
+#   docker compose --profile core up -d
+#   docker compose --profile core --profile casemgmt up -d
+#   docker compose --profile core --profile casemgmt --profile soar --profile intel up -d
+#
+# Or use the Makefile: `make up`, `make up-full`.
+
+name: wachturm
+
+# ── Network model (AGENTS.md §6.1/§6.2, PRD §8.6, ARCHITECTURE.md §3) ──
+# The inviolable rule is the ATTACKER has no egress. So:
+#   attack  : internal:true  — no host/internet route. HARD RULE (§6.2).
+#   victims : internal:true  — no egress needed; defence-in-depth.
+#   mgmt    : NOT internal   — it hosts the student-facing UIs (Wazuh
+#             dashboard, portal, later IRIS/Cortex/MISP) that ARCHITECTURE
+#             §7 requires reachable at 127.0.0.1. `internal:true` makes
+#             host-port publishing INERT (Docker can't bridge host↔a
+#             solely-internal container), so a sealed mgmt would make the
+#             whole lab unusable. mgmt UIs are loopback-only ingress
+#             (§6.1-compliant); mgmt egress is the accepted model (cf. the
+#             Cortex VT/AbuseIPDB exception, ARCHITECTURE §3).
+# Do NOT make `attack` non-internal to "make something work" (§6.5).
+networks:
+  victims:
+    name: wachturm-victims
+    driver: bridge
+    internal: true
+    ipam:
+      config:
+        - subnet: 10.50.10.0/24
+  attack:
+    name: wachturm-attack
+    driver: bridge
+    internal: true    # no host/internet egress; victims reached via the shared victims network
+    ipam:
+      config:
+        - subnet: 10.50.20.0/24
+  mgmt:
+    name: wachturm-mgmt
+    driver: bridge
+    # NOT internal — hosts the loopback student UIs (see network model
+    # note above). internal:true would make 127.0.0.1 host-port
+    # publishing inert. The egress-seal hard rule is enforced on
+    # `attack` (and `victims`), which DO stay internal.
+    ipam:
+      config:
+        - subnet: 10.50.30.0/24
+
+volumes:
+  # Wazuh manager — official 4.9.2 volume set; the images expect these
+  # exact mountpoints for correct persistence. Do not consolidate.
+  wazuh_api_configuration:
+  wazuh_etc:
+  wazuh_logs:
+  wazuh_queue:
+  wazuh_var_multigroups:
+  wazuh_integrations:
+  wazuh_active_response:
+  wazuh_agentless:
+  wazuh_wodles:
+  filebeat_etc:
+  filebeat_var:
+  wazuh-indexer-data:
+  wazuh-dashboard-config:
+  wazuh-dashboard-custom:
+  # Suricata EVE JSON, shared into the Wazuh manager for ingestion (SM3).
+  suricata-eve:
+  iris-db-data:
+  iris-rabbitmq-data:
+  iris-app-data:
+  iris-web-certs:        # self-signed TLS the iris-nginx front end serves
+  cortex-es-data:
+  cortex-data:
+  shuffle-data:
+  misp-data:
+  misp-db-data:
+
+services:
+
+  # =====================================================================
+  # CORE PROFILE — Phase 1
+  # =====================================================================
+
+  # --- Wazuh TLS bootstrap (one-shot; runs before the stack) ----------
+  # Faithfully reproduces the official wazuh/wazuh-docker v4.9.2 cert
+  # dance: generates the indexer/manager/dashboard TLS material from
+  # certs.yml into config/wazuh/wazuh_indexer_ssl_certs/, then exits.
+  # The three services wait for it via service_completed_successfully.
+  wazuh-certs-generator:
+    profiles: ["core"]
+    build: ./images/wazuh-certs-generator   # derived: pinned cert tool vendored at build (sealed runtime — P1 / §1.6)
+    container_name: wazuh-certs-generator
+    hostname: wazuh-certs-generator
+    networks: [mgmt]
+    volumes:
+      - ./config/wazuh/wazuh_indexer_ssl_certs/:/certificates/
+      - ./config/wazuh/certs.yml:/config/certs.yml:ro
+
+  wazuh-indexer:
+    profiles: ["core"]
+    image: wazuh/wazuh-indexer:4.9.2
+    container_name: wazuh-indexer
+    hostname: wazuh.indexer            # official TLS identity (cert SAN)
+    restart: unless-stopped
+    networks:
+      mgmt:
+        aliases: [wazuh.indexer]
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+      nofile: { soft: 65536, hard: 65536 }
+    environment:
+      OPENSEARCH_JAVA_OPTS: "-Xms1g -Xmx1g"
+    volumes:
+      - wazuh-indexer-data:/var/lib/wazuh-indexer
+      - ./config/wazuh/wazuh_indexer_ssl_certs/root-ca.pem:/usr/share/wazuh-indexer/certs/root-ca.pem:ro
+      - ./config/wazuh/wazuh_indexer_ssl_certs/wazuh.indexer-key.pem:/usr/share/wazuh-indexer/certs/wazuh.indexer.key:ro
+      - ./config/wazuh/wazuh_indexer_ssl_certs/wazuh.indexer.pem:/usr/share/wazuh-indexer/certs/wazuh.indexer.pem:ro
+      - ./config/wazuh/wazuh_indexer_ssl_certs/admin.pem:/usr/share/wazuh-indexer/certs/admin.pem:ro
+      - ./config/wazuh/wazuh_indexer_ssl_certs/admin-key.pem:/usr/share/wazuh-indexer/certs/admin-key.pem:ro
+      - ./config/wazuh/wazuh_indexer/wazuh.indexer.yml:/usr/share/wazuh-indexer/opensearch.yml:ro
+      - ./config/wazuh/wazuh_indexer/internal_users.yml:/usr/share/wazuh-indexer/opensearch-security/internal_users.yml:ro
+    depends_on:
+      wazuh-certs-generator:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s -k -u admin:SecretPassword https://localhost:9200/_cluster/health | grep -q '\"status\"'"]
+      interval: 20s
+      timeout: 10s
+      retries: 18
+      start_period: 120s
+
+  wazuh-manager:
+    profiles: ["core"]
+    image: wazuh/wazuh-manager:4.9.2
+    container_name: wazuh-manager
+    hostname: wazuh.manager            # official TLS identity (cert SAN)
+    restart: unless-stopped
+    networks:
+      mgmt:
+        aliases: [wazuh.manager]
+      victims:    # reach agents on victims (container-to-container; no host port)
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+      nofile: { soft: 655360, hard: 655360 }
+    environment:
+      - INDEXER_URL=https://wazuh.indexer:9200
+      - INDEXER_USERNAME=admin
+      - INDEXER_PASSWORD=SecretPassword
+      - FILEBEAT_SSL_VERIFICATION_MODE=full
+      - SSL_CERTIFICATE_AUTHORITIES=/etc/ssl/root-ca.pem
+      - SSL_CERTIFICATE=/etc/ssl/filebeat.pem
+      - SSL_KEY=/etc/ssl/filebeat.key
+      - API_USERNAME=wazuh-wui
+      - API_PASSWORD=MyS3cr37P450r.*-
+    volumes:
+      - wazuh_api_configuration:/var/ossec/api/configuration
+      - wazuh_etc:/var/ossec/etc
+      - wazuh_logs:/var/ossec/logs
+      - wazuh_queue:/var/ossec/queue
+      - wazuh_var_multigroups:/var/ossec/var/multigroups
+      - wazuh_integrations:/var/ossec/integrations
+      - wazuh_active_response:/var/ossec/active-response/bin
+      - wazuh_agentless:/var/ossec/agentless
+      - wazuh_wodles:/var/ossec/wodles
+      - filebeat_etc:/etc/filebeat
+      - filebeat_var:/var/lib/filebeat
+      - ./config/wazuh/wazuh_indexer_ssl_certs/root-ca-manager.pem:/etc/ssl/root-ca.pem:ro
+      - ./config/wazuh/wazuh_indexer_ssl_certs/wazuh.manager.pem:/etc/ssl/filebeat.pem:ro
+      - ./config/wazuh/wazuh_indexer_ssl_certs/wazuh.manager-key.pem:/etc/ssl/filebeat.key:ro
+      - ./config/wazuh/wazuh_cluster/wazuh_manager.conf:/wazuh-config-mount/etc/ossec.conf
+      # Custom rules MUST go via the /wazuh-config-mount staging path (same
+      # mechanism as ossec.conf above). Binding directly into the seeded
+      # /var/ossec/etc volume defeats the image's first-run seeding —
+      # analysisd then CRITICALs on missing etc/shared/ar.conf.
+      - ./config/wazuh/local_rules.xml:/wazuh-config-mount/etc/rules/local_rules.xml:ro
+      - suricata-eve:/var/log/suricata:ro   # read Suricata EVE JSON for ingestion (SM3)
+    depends_on:
+      wazuh-certs-generator:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "/var/ossec/bin/wazuh-control status | grep -q 'wazuh-analysisd is running'"]
+      interval: 20s
+      timeout: 10s
+      retries: 18
+      start_period: 120s
+
+  wazuh-dashboard:
+    profiles: ["core"]
+    image: wazuh/wazuh-dashboard:4.9.2
+    container_name: wazuh-dashboard
+    hostname: wazuh.dashboard          # official TLS identity (cert SAN)
+    restart: unless-stopped
+    networks:
+      mgmt:
+        aliases: [wazuh.dashboard]
+    ports:
+      # loopback ONLY (AGENTS §6.1); NOT official 0.0.0.0:443. Host port
+      # is overridable: 8443 collides with some local Docker substrates
+      # (Lima/Colima/Docker-Desktop). Set WAZUH_DASHBOARD_PORT in .env.
+      - "127.0.0.1:${WAZUH_DASHBOARD_PORT:-8443}:5601"
+    environment:
+      - INDEXER_USERNAME=admin
+      - INDEXER_PASSWORD=SecretPassword
+      - WAZUH_API_URL=https://wazuh.manager
+      - DASHBOARD_USERNAME=kibanaserver
+      - DASHBOARD_PASSWORD=kibanaserver
+      - API_USERNAME=wazuh-wui
+      - API_PASSWORD=MyS3cr37P450r.*-
+    volumes:
+      - ./config/wazuh/wazuh_indexer_ssl_certs/wazuh.dashboard.pem:/usr/share/wazuh-dashboard/certs/wazuh-dashboard.pem:ro
+      - ./config/wazuh/wazuh_indexer_ssl_certs/wazuh.dashboard-key.pem:/usr/share/wazuh-dashboard/certs/wazuh-dashboard-key.pem:ro
+      - ./config/wazuh/wazuh_indexer_ssl_certs/root-ca.pem:/usr/share/wazuh-dashboard/certs/root-ca.pem:ro
+      - ./config/wazuh/wazuh_dashboard/opensearch_dashboards.yml:/usr/share/wazuh-dashboard/config/opensearch_dashboards.yml:ro
+      - ./config/wazuh/wazuh_dashboard/wazuh.yml:/usr/share/wazuh-dashboard/data/wazuh/config/wazuh.yml
+      - wazuh-dashboard-config:/usr/share/wazuh-dashboard/data/wazuh/config
+      - wazuh-dashboard-custom:/usr/share/wazuh-dashboard/plugins/wazuh/public/assets/custom
+    depends_on:
+      wazuh-indexer:
+        condition: service_healthy
+      wazuh-certs-generator:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sk -o /dev/null -w '%{http_code}' https://localhost:5601/ | grep -qE '200|302'"]
+      interval: 20s
+      timeout: 10s
+      retries: 18
+      start_period: 120s
+
+  suricata:
+    profiles: ["core"]
+    build: ./images/suricata
+    container_name: suricata
+    hostname: suricata
+    restart: unless-stopped
+    cap_add: [NET_ADMIN, NET_RAW, SYS_NICE]
+    networks: [mgmt, victims]
+    volumes:
+      # Suricata's packaged default config already enables EVE JSON here;
+      # we don't bind-mount over /etc/suricata (don't fight the config).
+      - suricata-eve:/var/log/suricata    # EVE JSON; the Wazuh manager reads this
+    depends_on:
+      wazuh-manager:
+        condition: service_healthy
+    # Liveness = the suricata process is alive AND its engine fully
+    # initialised ("Engine started" is written once, after rules load +
+    # threads + capture start). Deliberately NOT `test -s eve.json`:
+    # that only ever passed because Suricata's stats records flooded
+    # eve.json every 8s, which is the very wide-JSON source that
+    # overflows the Wazuh manager's analysisd JSON decoder (removed in
+    # images/suricata/entrypoint.sh). A correct NIDS at idle in a
+    # sealed lab writes zero alert records, so an empty eve.json is
+    # healthy, not broken. `pidof` matches the binary (no cmdline
+    # self-match like `pgrep -f`); suricata.log is on the shared volume.
+    healthcheck:
+      test: ["CMD-SHELL", "pidof suricata >/dev/null && grep -q 'Engine started' /var/log/suricata/suricata.log"]
+      interval: 20s
+      timeout: 10s
+      retries: 12
+      start_period: 90s
+
+  # --- Victims --------------------------------------------------------
+
+  vic-web:
+    profiles: ["core"]
+    build:
+      context: ./images/victim-web
+      args:
+        WAZUH_MANAGER: wazuh-manager
+    container_name: vic-web
+    hostname: vic-web
+    restart: unless-stopped
+    networks:
+      victims:
+        ipv4_address: 10.50.10.10
+    depends_on:
+      wazuh-manager:
+        condition: service_healthy
+    healthcheck:
+      # Agent must be CONNECTED to the manager (not merely running), else
+      # `docker compose --wait` reports the lab ready while logcollector
+      # isn't tailing yet and a scenario's first attack lines are missed
+      # (P3a: silent LAB_INTEGRITY_FAIL on a fresh lab). `.connected.`
+      # does not match `disconnected`.
+      test: ["CMD-SHELL", "pgrep nginx >/dev/null && grep -qE \"status=.connected.\" /var/ossec/var/run/wazuh-agentd.state"]
+      interval: 20s
+      timeout: 10s
+      retries: 12
+      start_period: 90s
+
+  vic-work:
+    profiles: ["core"]
+    build:
+      context: ./images/victim-work
+      args:
+        WAZUH_MANAGER: wazuh-manager
+    container_name: vic-work
+    hostname: vic-work
+    restart: unless-stopped
+    networks:
+      victims:
+        ipv4_address: 10.50.10.20
+    depends_on:
+      wazuh-manager:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "grep -qE \"status=.connected.\" /var/ossec/var/run/wazuh-agentd.state"]
+      interval: 20s
+      timeout: 10s
+      retries: 12
+      start_period: 90s
+
+  vic-jump:
+    profiles: ["core"]
+    build:
+      context: ./images/victim-jump
+      args:
+        WAZUH_MANAGER: wazuh-manager
+    container_name: vic-jump
+    hostname: vic-jump
+    restart: unless-stopped
+    networks:
+      victims:
+        ipv4_address: 10.50.10.30
+    depends_on:
+      wazuh-manager:
+        condition: service_healthy   # advisor #3: deterministic enrollment ordering
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep sshd >/dev/null && grep -qE \"status=.connected.\" /var/ossec/var/run/wazuh-agentd.state"]
+      interval: 20s
+      timeout: 10s
+      retries: 12
+      start_period: 90s
+
+  vic-dc:
+    profiles: ["core"]
+    build:
+      context: ./images/victim-dc
+      args:
+        WAZUH_MANAGER: wazuh-manager
+    container_name: vic-dc
+    hostname: vic-dc
+    restart: unless-stopped
+    networks:
+      victims:
+        ipv4_address: 10.50.10.40
+    depends_on:
+      wazuh-manager:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f emit-windows-events >/dev/null && grep -qE \"status=.connected.\" /var/ossec/var/run/wazuh-agentd.state"]
+      interval: 20s
+      timeout: 10s
+      retries: 12
+      start_period: 90s
+
+  # --- Attacker -------------------------------------------------------
+
+  atk-kali:
+    profiles: ["core"]
+    build: ./images/attacker
+    container_name: atk-kali
+    hostname: atk-kali
+    restart: "no"
+    cap_add: [NET_RAW, NET_ADMIN]
+    networks:
+      attack:
+        ipv4_address: 10.50.20.10
+      victims:
+        ipv4_address: 10.50.10.250   # pinned: SM5 scenarios reference the attacker deterministically
+    # No mgmt network. No host network. Stays leashed.
+    command: ["sleep", "infinity"]
+
+  # --- Portal landing page -------------------------------------------
+
+  wachturm-portal:
+    profiles: ["core"]
+    build: ./images/portal
+    container_name: wachturm-portal
+    hostname: wachturm-portal
+    restart: unless-stopped
+    networks: [mgmt]
+    ports:
+      - "127.0.0.1:8000:80"
+    # Portal proxies /api/health/* to each tool over the mgmt network.
+    # Tools in other profiles will report "offline" until brought up.
+
+  # --- Benign noise ---------------------------------------------------
+
+  noise-gen:
+    profiles: ["core"]
+    build: ./images/noise-gen
+    container_name: noise-gen
+    hostname: noise-gen
+    restart: unless-stopped
+    networks:
+      victims:
+        ipv4_address: 10.50.10.5     # fixed identity; SM5 scenarios EXCLUDE this IP (noise-gen README contract)
+    environment:
+      NOISE_EVENTS_PER_MIN: "60"
+      NOISE_SEED: "${NOISE_SEED:-42}"
+
+  # =====================================================================
+  # CASEMGMT PROFILE — Phase 2
+  # DFIR-IRIS replaces TheHive 5 (which moved to a non-OSS license at end of
+  # 2022). IRIS is LGPL3 and Docker-native. See THIRD_PARTY.md for details.
+  # =====================================================================
+
+  iris-db:
+    profiles: ["casemgmt"]
+    image: postgres:16-alpine
+    container_name: iris-db
+    restart: unless-stopped
+    networks: [mgmt]
+    volumes:
+      - iris-db-data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_USER:     "${IRIS_DB_USER:-iris}"
+      POSTGRES_PASSWORD: "${IRIS_DB_PASSWORD:-changeme_in_env}"
+      # IRIS uses a privileged "admin" identity for the alembic migration
+      # connection and the runtime POSTGRES_USER for the app. Vanilla
+      # postgres only makes the single POSTGRES_USER superuser, so we
+      # point IRIS's admin at it (collapse the two-role model). Upstream's
+      # iriswebapp_db image splits these; revisit if post_init collides.
+      POSTGRES_ADMIN_USER:     "${IRIS_DB_USER:-iris}"
+      POSTGRES_ADMIN_PASSWORD: "${IRIS_DB_PASSWORD:-changeme_in_env}"
+      POSTGRES_DB:       "iris_db"
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "${IRIS_DB_USER:-iris}", "-d", "iris_db"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+  iris-rabbitmq:
+    profiles: ["casemgmt"]
+    image: rabbitmq:3.13-management-alpine
+    container_name: iris-rabbitmq
+    restart: unless-stopped
+    networks:
+      mgmt:
+        # IRIS's celery builds its broker URL as amqp://guest@rabbitmq:5672//
+        # (literal host "rabbitmq"; it does NOT honour RABBITMQ_HOST). Our
+        # service is iris-rabbitmq, so expose the "rabbitmq" DNS name via an
+        # alias — same pattern as wazuh.manager / wazuh.indexer. Renaming the
+        # service would churn every depends_on/reference for no gain.
+        aliases: [rabbitmq]
+    volumes:
+      - iris-rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 30s
+
+  iris-app:
+    profiles: ["casemgmt"]
+    image: ghcr.io/dfir-iris/iriswebapp_app:v2.4.20    # pin in .env via IRIS_VERSION
+    container_name: iris-app
+    restart: unless-stopped
+    networks: [mgmt]
+    # Upstream v2.4.20 sets this exact command in compose (NOT the image
+    # CMD): iris-entrypoint.sh switches role on arg1 — iriswebapp here vs
+    # iriswebapp_worker for iris-worker. Without it the entrypoint no-ops
+    # and the container exits 0 in a restart loop with no logs.
+    command: ["nohup", "./iris-entrypoint.sh", "iriswebapp"]
+    depends_on:
+      iris-db:
+        condition: service_healthy
+      iris-rabbitmq:
+        condition: service_healthy
+    volumes:
+      - iris-app-data:/home/iris/downloads
+    environment:
+      POSTGRES_USER:     "${IRIS_DB_USER:-iris}"
+      POSTGRES_PASSWORD: "${IRIS_DB_PASSWORD:-changeme_in_env}"
+      # post_init.py runs `alembic upgrade head` over this admin identity;
+      # without it the DSN user resolves to None ("password authentication
+      # failed for user None"). Collapsed onto POSTGRES_USER (see iris-db).
+      POSTGRES_ADMIN_USER:     "${IRIS_DB_USER:-iris}"
+      POSTGRES_ADMIN_PASSWORD: "${IRIS_DB_PASSWORD:-changeme_in_env}"
+      POSTGRES_SERVER:   iris-db
+      POSTGRES_PORT:     "5432"
+      RABBITMQ_HOST:     iris-rabbitmq
+      IRIS_SECRET_KEY:   "${IRIS_SECRET_KEY:-changeme_in_env}"
+      IRIS_SECURITY_PASSWORD_SALT: "${IRIS_PW_SALT:-changeme_in_env}"
+      IRIS_ADM_PASSWORD: "${IRIS_ADM_PASSWORD:-changeme_in_env}"
+    # python3 is in the IRIS app image (it IS a Python app). A TCP-connect
+    # probe on gunicorn:8000 is robust across image tooling; the precise
+    # "API actually authenticates" readiness is asserted in P2-M1. The
+    # long start_period covers the first-boot DB migration the entrypoint
+    # runs (upstream ships NO healthcheck for this service).
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import socket,sys; s=socket.socket(); s.settimeout(3); sys.exit(s.connect_ex(('127.0.0.1',8000)))"]
+      interval: 20s
+      timeout: 10s
+      retries: 30
+      start_period: 180s
+
+  iris-worker:
+    profiles: ["casemgmt"]
+    image: ghcr.io/dfir-iris/iriswebapp_app:v2.4.20
+    container_name: iris-worker
+    restart: unless-stopped
+    networks: [mgmt]
+    # arg1 MUST be exactly "iris-worker": the image's iris-entrypoint.sh
+    # runs `celery -A app.celery worker` ONLY for that literal string,
+    # else it falls through to gunicorn. The scaffolded "iriswebapp_worker"
+    # silently ran the web app instead of the Celery task worker (no IRIS
+    # async processing at all — fatal for the P2-M3 alert→case pipeline),
+    # masked because the entrypoint's `while true` loop keeps the
+    # container Up and this service has no healthcheck. Verified against
+    # the pinned v2.4.20 image's /iriswebapp/iris-entrypoint.sh.
+    command: ["./iris-entrypoint.sh", "iris-worker"]
+    depends_on:
+      iris-db:
+        condition: service_healthy
+      iris-rabbitmq:
+        condition: service_healthy
+      iris-app:
+        condition: service_healthy
+    # iris-app is gated FIRST (not just db/rabbitmq): BOTH the app and the
+    # worker entrypoints run run_post_init "Creating all Iris tables" on
+    # boot. On a COLD empty DB they race — concurrent CREATE TABLE →
+    # "duplicate key value violates unique constraint
+    # pg_type_typname_nsp_index (assets_type)" → the app's post_init
+    # aborts ("IRIS not started") and the DB is left half-migrated.
+    # Serializing the worker AFTER iris-app is healthy makes iris-app the
+    # sole first-boot initializer; the worker's later create_all + alembic
+    # is then a harmless idempotent no-op (verified empirically). No
+    # cycle: iris-app does not depend on the worker.
+    # No healthcheck: the Celery worker has no listening port; its real
+    # function (draining the IRIS task queue) is verified end-to-end by
+    # the alert→case DoD in P2-M3. Upstream ships none either.
+    environment:
+      POSTGRES_USER:     "${IRIS_DB_USER:-iris}"
+      POSTGRES_PASSWORD: "${IRIS_DB_PASSWORD:-changeme_in_env}"
+      # Same as iris-app: the iriswebapp_worker entrypoint ALSO runs
+      # run_post_init, whose alembic/admin DB connection needs this
+      # identity — without it the DSN user resolves to None ("password
+      # authentication failed for user None") and the worker fails to
+      # boot. (Missed in the original Option-B fix; this service uses the
+      # same image/entrypoint as iris-app and needs the same env.)
+      POSTGRES_ADMIN_USER:     "${IRIS_DB_USER:-iris}"
+      POSTGRES_ADMIN_PASSWORD: "${IRIS_DB_PASSWORD:-changeme_in_env}"
+      POSTGRES_SERVER:   iris-db
+      POSTGRES_PORT:     "5432"
+      RABBITMQ_HOST:     iris-rabbitmq
+      IRIS_SECRET_KEY:   "${IRIS_SECRET_KEY:-changeme_in_env}"
+      IRIS_SECURITY_PASSWORD_SALT: "${IRIS_PW_SALT:-changeme_in_env}"
+
+  # One-shot: generate the self-signed TLS cert iris-nginx serves. The
+  # iriswebapp_nginx image does NOT self-generate (it [emerg]-exits with
+  # "cannot load certificate /www/certs/"). Mirrors the proven
+  # images/wazuh-certs-generator pattern; gated below via
+  # service_completed_successfully.
+  iris-certs-generator:
+    profiles: ["casemgmt"]
+    build: ./images/iris-certs-generator
+    container_name: iris-certs-generator
+    hostname: iris-certs-generator
+    networks: [mgmt]
+    volumes:
+      - iris-web-certs:/certs
+
+  iris-nginx:
+    profiles: ["casemgmt"]
+    image: ghcr.io/dfir-iris/iriswebapp_nginx:v2.4.20
+    container_name: iris-nginx
+    restart: unless-stopped
+    networks: [mgmt]
+    ports:
+      - "127.0.0.1:9000:8443"
+    environment:
+      # The iriswebapp_nginx entrypoint renders /etc/nginx/nginx.conf via
+      # envsubst from these. Without them `listen ${INTERFACE_HTTPS_PORT}
+      # ssl;` collapses to `listen ssl;` and nginx [emerg]-exits in a
+      # crash loop. This is the upstream v2.4.20 nginx-service contract.
+      IRIS_UPSTREAM_SERVER:     iris-app
+      IRIS_UPSTREAM_PORT:       "8000"   # iris-app gunicorn port
+      INTERFACE_HTTPS_PORT:     "8443"   # MUST equal the container side of the port map above
+      SERVER_NAME:              localhost
+      IRIS_AUTHENTICATION_TYPE: local
+      CERT_FILENAME:            iris_cert.pem   # file in /www/certs (see iris-certs-generator)
+      KEY_FILENAME:             iris_key.pem
+    volumes:
+      - iris-web-certs:/www/certs:ro
+    depends_on:
+      iris-app:
+        condition: service_healthy
+      iris-certs-generator:
+        condition: service_completed_successfully
+    # No compose healthcheck override: the iriswebapp_nginx image ships
+    # its OWN HEALTHCHECK (curl -k https://127.0.0.1:${INTERFACE_HTTPS_PORT});
+    # compose surfaces it. Ordering is still gated on iris-app healthy.
+
+  cortex-es:
+    profiles: ["casemgmt"]
+    image: elasticsearch:7.17.27
+    container_name: cortex-es
+    restart: unless-stopped
+    networks: [mgmt]
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: "-Xms512m -Xmx1g"
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+    volumes:
+      # cortex-es-data was declared but never mounted — Cortex's analyzer
+      # job history was ephemeral across restarts. Mount it.
+      - cortex-es-data:/usr/share/elasticsearch/data
+    healthcheck:
+      # ES 7.x images ship bash but not curl; a /dev/tcp probe on 9200 is
+      # the robust readiness gate (Cortex retries ES on its own anyway).
+      test: ["CMD", "bash", "-c", "</dev/tcp/127.0.0.1/9200"]
+      interval: 20s
+      timeout: 10s
+      retries: 24
+      start_period: 60s
+
+  cortex:
+    profiles: ["casemgmt"]
+    image: thehiveproject/cortex:3.1.8
+    container_name: cortex
+    restart: unless-stopped
+    networks: [mgmt]
+    ports:
+      - "127.0.0.1:9001:9001"
+    depends_on:
+      cortex-es:
+        condition: service_healthy
+    environment:
+      # Play application secret. Safe-but-insecure sealed-lab default
+      # (same pattern as the IRIS_* vars); override via CORTEX_PLAY_SECRET
+      # in .env. application.conf reads ${?CORTEX_PLAY_SECRET}.
+      CORTEX_PLAY_SECRET: "${CORTEX_PLAY_SECRET:-changeme_in_env}"
+      # Cortex's image entrypoint mkdir/chowns this path (default
+      # /tmp/cortex-jobs) for the daemon user. It MUST equal the
+      # identical-path job bind below and the application.conf
+      # job.directory — see that volume's comment for why.
+      job_directory: /tmp/cortex-jobs
+    volumes:
+      - cortex-data:/opt/cortex/data
+      - ./config/cortex/application.conf:/etc/cortex/application.conf:ro
+      # ── SECURITY — user-approved Phase-2 decision (see SECURITY.md) ───
+      # Cortex 3.x runs every analyzer as a transient Docker container, so
+      # the cortex service needs the host Docker socket. Mounting
+      # docker.sock is root-equivalent on the host — the single highest-
+      # blast-radius mount in the whole stack. ACCEPTED for this
+      # explicitly local, single-operator teaching lab: Cortex ingress is
+      # loopback-only and the host is the operator's own machine. This is
+      # the SAME treatment as shuffle-orborus (Phase 4, below). A socket-
+      # free custom-analyzer-image is the documented hardening backlog.
+      - /var/run/docker.sock:/var/run/docker.sock
+      # ── Cortex analyzer job directory (identical-path bind) ──────────
+      # Cortex writes each analyzer job's input.json into this dir, then
+      # asks the HOST docker (via the socket above) to bind that subdir
+      # into the transient neuron container as /job. The daemon resolves
+      # the path on the HOST, so the path must be identical inside the
+      # cortex container and on the host — exactly the official
+      # TheHive-Project/Cortex compose pattern (`${job_directory}:
+      # ${job_directory}`). Without this, the neuron's cortexutils reads
+      # an empty stdin and every analyzer fails with JSONDecodeError
+      # (verified against the running 3.1.8 image in P2-M4). This bind
+      # is ENTAILED by the already-accepted docker.sock decision — no
+      # shared job dir means no dockerized analyzers at all — and is far
+      # lower blast-radius (transient job scratch, keepJobFolder=false).
+      # application.conf pins job.directory to this same path because our
+      # config is mounted read-only (the entrypoint cannot append it).
+      - /tmp/cortex-jobs:/tmp/cortex-jobs
+    healthcheck:
+      # Cortex (openjdk/debian) ships bash; /dev/tcp on 9001 gates "Play
+      # HTTP up". The real "analyzer runs from IRIS" assertion is P2-M4.
+      test: ["CMD", "bash", "-c", "</dev/tcp/127.0.0.1/9001"]
+      interval: 20s
+      timeout: 10s
+      retries: 30
+      start_period: 90s
+
+  # Always-on Wazuh->IRIS watcher (P2-M3): tails the manager's
+  # alerts.json (wazuh_logs:ro — the M0 share contract) and creates
+  # IRIS cases with extracted observables. Build context is the repo
+  # root so the runner package is installable (see root .dockerignore).
+  wazuh-to-iris:
+    profiles: ["casemgmt"]
+    build:
+      context: .
+      dockerfile: images/wazuh-to-iris/Dockerfile
+    container_name: wazuh-to-iris
+    hostname: wazuh-to-iris
+    restart: unless-stopped
+    networks: [mgmt]
+    depends_on:
+      iris-nginx:
+        condition: service_healthy
+      wazuh-manager:
+        condition: service_healthy
+    volumes:
+      - wazuh_logs:/var/ossec/logs:ro
+      # Dir (not file) mount: the iris-bootstrap hook writes the token
+      # AFTER the stack is up, so a bind-mount of a not-yet-existing
+      # file would make Docker create a directory. ${HOME}/.wachturm is
+      # pre-created USER-owned by `make up-casemgmt`; the watcher blocks
+      # until the token appears (the mount is a live host view).
+      - ${HOME}/.wachturm:/etc/wachturm:ro
+    # No healthcheck: a long-running tail loop with no port. It blocks
+    # on the token then watches; real function is e2e-verified by the
+    # 90s alert→case DoD (P2-M3).
+
+  # =====================================================================
+  # SOAR PROFILE — Phase 4
+  # =====================================================================
+
+  shuffle-frontend:
+    profiles: ["soar"]
+    image: ghcr.io/shuffle/shuffle-frontend:latest    # pin in Phase 4
+    container_name: shuffle-frontend
+    restart: unless-stopped
+    networks: [mgmt]
+    ports:
+      - "127.0.0.1:3001:80"
+
+  shuffle-backend:
+    profiles: ["soar"]
+    image: ghcr.io/shuffle/shuffle-backend:latest
+    container_name: shuffle-backend
+    restart: unless-stopped
+    networks: [mgmt]
+    volumes:
+      - shuffle-data:/etc/shuffle
+
+  shuffle-orborus:
+    profiles: ["soar"]
+    image: ghcr.io/shuffle/shuffle-orborus:latest
+    container_name: shuffle-orborus
+    restart: unless-stopped
+    networks: [mgmt]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+
+  # =====================================================================
+  # INTEL PROFILE — Phase 4
+  # =====================================================================
+
+  misp-db:
+    profiles: ["intel"]
+    image: mariadb:10.11
+    container_name: misp-db
+    restart: unless-stopped
+    networks: [mgmt]
+    volumes:
+      - misp-db-data:/var/lib/mysql
+    environment:
+      MYSQL_DATABASE: misp
+      MYSQL_USER: misp
+      MYSQL_PASSWORD: "${MISP_DB_PASSWORD:-changeme_in_env}"
+      MYSQL_ROOT_PASSWORD: "${MISP_DB_ROOT_PASSWORD:-changeme_in_env}"
+
+  misp:
+    profiles: ["intel"]
+    image: coolacid/misp-docker:core-latest    # pin in Phase 4
+    container_name: misp
+    restart: unless-stopped
+    networks: [mgmt]
+    ports:
+      - "127.0.0.1:8080:80"
+    depends_on: [misp-db]
+    volumes:
+      - misp-data:/var/www/MISP
+    environment:
+      MYSQL_HOST: misp-db
+      MYSQL_DATABASE: misp
+      MYSQL_USER: misp
+      MYSQL_PASSWORD: "${MISP_DB_PASSWORD:-changeme_in_env}"

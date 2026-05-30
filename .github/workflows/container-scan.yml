@@ -1,0 +1,115 @@
+# .github/workflows/container-scan.yml
+#
+# Builds the project's custom container images and scans them with Trivy
+# for known CVEs and misconfigurations. Runs on PRs that touch image
+# directories, on every push to main, and weekly.
+#
+# Upstream images (Wazuh, IRIS, Cortex) are NOT scanned here — those are
+# maintained by their respective projects, pinned in docker-compose.yml,
+# and tracked via Dependabot for version bumps.
+#
+# ── Finding-triage policy (read before reacting to a red run) ────────
+# This job has two distinct "failure" sources; do not conflate them:
+#
+#   1. Trivy CVE findings. The Trivy step uses `ignore-unfixed: true` and
+#      `exit-code: 0`, so it NEVER fails the job on CVEs — findings are
+#      informational SARIF only. Triage rule: a CVE in a base image
+#      (ubuntu/debian/python/nginx/Wazuh-agent) with no upstream fix →
+#      note in the phase handoff and proceed (we can't patch upstream).
+#      A finding introduced by our own Dockerfile RUN steps or config
+#      (e.g. a tool we install, our local_rules.xml) → fix it.
+#
+#   2. The "Upload SARIF" step. It posts to GitHub code scanning, which
+#      requires GitHub Advanced Security. On the PRIVATE wachturm-source
+#      repo (lernen-edu free plan) GHAS is unavailable, so this step
+#      ERRORS and the job shows red — this is the known plan limitation,
+#      NOT a vulnerability. It resolves automatically on the PUBLIC
+#      wachturm repo (free GHAS for public) when images land at v1.0.0.
+#
+# Net: a red container-scan on wachturm-source is expected and is the
+# SARIF-upload/GHAS gate, not a security regression. Verify which of the
+# two it is before treating any run as a real problem.
+
+name: Container scan
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "images/**"
+      - ".github/workflows/container-scan.yml"
+  pull_request:
+    branches: ["main"]
+    paths:
+      - "images/**"
+      - ".github/workflows/container-scan.yml"
+  schedule:
+    - cron: "0 8 * * 1"  # Weekly Monday 08:00 UTC
+
+permissions:
+  contents: read
+  security-events: write   # to upload SARIF results
+
+jobs:
+  discover:
+    name: Discover image directories
+    runs-on: ubuntu-latest
+    outputs:
+      images: ${{ steps.list.outputs.images }}
+    steps:
+      - uses: actions/checkout@v6
+      - id: list
+        name: Enumerate Dockerfile directories
+        run: |
+          # Each subdirectory of images/ containing a Dockerfile is a
+          # buildable image. Emit as JSON for matrix consumption.
+          IMAGES=$(find images -mindepth 2 -maxdepth 2 -name Dockerfile \
+                    | sed 's|/Dockerfile||' \
+                    | jq -R -s -c 'split("\n") | map(select(length > 0))')
+          echo "images=$IMAGES" >> "$GITHUB_OUTPUT"
+          echo "Found images: $IMAGES"
+
+  scan:
+    name: Scan ${{ matrix.image }}
+    needs: discover
+    runs-on: ubuntu-latest
+    if: ${{ needs.discover.outputs.images != '[]' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ${{ fromJson(needs.discover.outputs.images) }}
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set image tag
+        id: tag
+        run: |
+          NAME=$(basename "${{ matrix.image }}")
+          echo "name=wachturm/$NAME" >> "$GITHUB_OUTPUT"
+          echo "tag=wachturm/$NAME:scan-${{ github.sha }}" >> "$GITHUB_OUTPUT"
+
+      - name: Build image
+        uses: docker/build-push-action@v7
+        with:
+          context: ./${{ matrix.image }}
+          push: false
+          load: true
+          tags: ${{ steps.tag.outputs.tag }}
+
+      - name: Run Trivy
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ steps.tag.outputs.tag }}
+          format: sarif
+          output: trivy-${{ steps.tag.outputs.name }}.sarif
+          severity: "CRITICAL,HIGH"
+          ignore-unfixed: true   # don't fail on CVEs with no upstream fix
+          exit-code: "0"         # report findings, don't fail the job
+
+      - name: Upload SARIF
+        uses: github/codeql-action/upload-sarif@v4
+        if: always()
+        with:
+          sarif_file: trivy-${{ steps.tag.outputs.name }}.sarif
+          category: "trivy-${{ steps.tag.outputs.name }}"

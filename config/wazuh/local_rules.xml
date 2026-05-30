@@ -1,0 +1,53 @@
+<!--
+  Wachturm custom Wazuh rules.
+
+  Mounted via /wazuh-config-mount/etc/rules/local_rules.xml (the wazuh-
+  manager image's staging path) and overlaid into the seeded
+  /var/ossec/etc/rules/ on manager start. The official wazuh_manager.conf
+  has <rule_dir>etc/rules</rule_dir>, so this file loads automatically
+  (after the base ruleset, so <if_sid> can reference built-in rules).
+
+  IMPORTANT: Wazuh analysisd REJECTS a <group> containing zero <rule>
+  elements ("Group without any rule" -> CRITICAL 1220, manager won't
+  start). Wazuh's own default local_rules.xml ships an example rule for
+  this reason. So this file carries ONE inert, level-0,
+  impossible-to-match placeholder purely to stay valid.
+
+  Phase 1 scenarios (SCN-001 SSH brute force, SCN-002 authorized scanner,
+  SCN-003 typo'd password) rely entirely on Wazuh's BUILT-IN sshd
+  ruleset (5710 invalid user, 5712 brute-force, 5715 success-after-
+  failures, 5716 failed password). No custom rules are required for v1.
+  Real scenario-specific rules get added here later (IDs 100000+, one
+  <rule> per documented need).
+-->
+<group name="wachturm,local,">
+  <rule id="100000" level="0">
+    <if_sid>1</if_sid>
+    <match>__WACHTURM_PLACEHOLDER_NEVER_MATCHES__</match>
+    <description>Wachturm placeholder: keeps local_rules.xml valid; never matches, never alerts.</description>
+  </rule>
+
+  <!-- SCN-004: a known-malware test file (EICAR) retrieved over HTTP.
+       Wazuh is not an AV and ships no EICAR/CDB signature; this rides
+       the PROVEN web-accesslog decoder (gate-verified by SCN-010) and
+       matches the request URL, so no image rebuild / CDB / realtime-FIM
+       is needed (same synthetic-source + minimal-local-rule model as
+       the approved Suricata EVE-injection). decoded_as keeps it robust
+       to the built-in web rule-chain ids. -->
+  <!-- The EICAR GET /eicar.com (simple GET, 200, no query) is matched by
+       Wazuh's built-in level-0 31108 "Ignored URLs (simple queries)",
+       which terminates evaluation — so a child of 31100 never gets
+       reached. The idiomatic override is to chain from the rule that
+       actually fires (31108) and re-alert via the first-class <url>
+       element (NOT <field name="url"> — that errors "static", CRITICAL
+       1220). Filename is scenario-controlled lowercase 'eicar.com'. -->
+  <rule id="100400" level="8">
+    <if_sid>31108</if_sid>
+    <url>eicar</url>
+    <description>Known-malware test file (EICAR) retrieved over HTTP</description>
+    <mitre>
+      <id>T1105</id>
+    </mitre>
+    <group>malware,attack,wachturm,</group>
+  </rule>
+</group>

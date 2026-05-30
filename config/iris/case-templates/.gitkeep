@@ -1,0 +1,3 @@
+# Placeholder so git tracks config/iris/case-templates/ before P2-M3
+# populates it with the authentication/malware/network/web/generic
+# IRIS case templates. Safe to delete once real templates land.

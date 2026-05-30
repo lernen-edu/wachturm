@@ -1,0 +1,133 @@
+# .gitignore for Wachturm
+#
+# Conservative defaults: ignore typical build/cache artifacts, secrets,
+# IDE clutter, and release-staging directories. Anything privacy-sensitive
+# should also be backed by `release/banned-terms.txt` for defense in depth.
+
+# ── Python ─────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+*.pid
+*.pid.lock
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+.python-version
+
+# Test / coverage
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+.tox/
+.nox/
+nosetests.xml
+coverage.xml
+
+# Linters / type checkers
+.mypy_cache/
+.ruff_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
+
+# ── Docker ─────────────────────────────────────────────────────────
+# Never commit the active .env (secrets); .env.example is committed
+.env
+.env.local
+.env.*.local
+
+# Container volumes and runtime data
+volumes/
+*-data/
+wazuh-config/
+iris-config/
+cortex-config/
+
+# Token files written by `make first-run-creds`
+*.token
+~/.wachturm/
+.wachturm/
+
+# ── Release machinery ──────────────────────────────────────────────
+# Staging directory produced by build-public.sh
+.public-staging/
+*.public-staging/
+
+# Test outputs and scratch
+**/scratch/
+**/*.local.*
+.test-tokens/
+
+# ── IDE / editor ───────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+.settings/
+*.sublime-workspace
+*.sublime-project
+.vs/
+
+# ── OS ─────────────────────────────────────────────────────────────
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# ── Logs / temp ────────────────────────────────────────────────────
+*.log
+logs/
+tmp/
+temp/
+
+# ── Project-specific ──────────────────────────────────────────────
+# Tester feedback files are private; keep them in the source repo only
+# but don't accidentally commit transient drafts
+docs/v*-tester-feedback.draft.md
+docs/v*-backlog.draft.md
+
+# Internal docs that haven't been promoted out of /internal yet
+docs/internal/scratch/
+
+# Local dev override of compose
+docker-compose.local.yml
+docker-compose.override.yml
+
+# Wazuh TLS material generated at runtime by the certs-generator one-shot.
+# NEVER commit these (AGENTS.md §6.3). Only the .gitkeep is tracked.
+config/wazuh/wazuh_indexer_ssl_certs/*
+!config/wazuh/wazuh_indexer_ssl_certs/.gitkeep

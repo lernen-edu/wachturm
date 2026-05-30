@@ -1,0 +1,183 @@
+# .github/dependabot.yml
+#
+# Automated dependency updates for Wachturm. Runs on both wachturm-source
+# (private, where it actually executes) and wachturm (public, via the
+# release promotion). Configure both repos to enable Dependabot alerts
+# and Dependabot security updates in their settings (via GitHub MCP
+# during initial setup, or manually).
+#
+# Strategy:
+#   - Weekly cadence on Mondays; avoids weekend PR backlogs.
+#   - Limit of 5 open PRs per ecosystem so the queue stays reviewable.
+#   - Labels make filtering and triage easy.
+#   - Dockerfile coverage expands as Claude Code adds victim/attacker
+#     images in Phase 1. Each new image directory needs its own entry.
+#   - victim-*/suricata/attacker/noise-gen base OSes are FROZEN (the
+#     dependency is ignored entirely — all version AND digest updates):
+#     a base-OS change can silently shift the log lines Wazuh decodes
+#     and break the SCN detection chain, and CI never runs the stack.
+#     Un-pin = delete that image's `ignore` block, then run the
+#     batch-hybrid + bisect OS-upgrade verification cycle before merging.
+#     Don't let "deferred" become "forever" by inertia.
+
+version: 2
+
+updates:
+  # ── Python runner ──────────────────────────────────────────────────
+  - package-ecosystem: "pip"
+    directory: "/runner"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "python"
+    commit-message:
+      prefix: "deps(python)"
+      include: "scope"
+
+  # ── GitHub Actions ─────────────────────────────────────────────────
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "github-actions"
+    commit-message:
+      prefix: "deps(actions)"
+      include: "scope"
+
+  # ── Docker: portal ─────────────────────────────────────────────────
+  - package-ecosystem: "docker"
+    directory: "/images/portal"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 3
+    labels:
+      - "dependencies"
+      - "docker"
+    commit-message:
+      prefix: "deps(docker)"
+      include: "scope"
+
+  # ── Docker: wazuh-certs-generator (derived; tracks upstream base) ──
+  - package-ecosystem: "docker"
+    directory: "/images/wazuh-certs-generator"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 3
+    labels:
+      - "dependencies"
+      - "docker"
+    commit-message:
+      prefix: "deps(docker)"
+      include: "scope"
+
+  # ── Docker: victim-jump (Ubuntu base; agent pinned via repo, not here) ─
+  - package-ecosystem: "docker"
+    directory: "/images/victim-jump"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 3
+    labels:
+      - "dependencies"
+      - "docker"
+    commit-message:
+      prefix: "deps(docker)"
+      include: "scope"
+    # Frozen (deferred #14, ubuntu 22.04->26.04). Any base-OS change
+    # can silently shift the log lines Wazuh decodes; CI never runs the
+    # stack. Un-pin via the batch-hybrid+bisect cycle (remove this).
+    ignore:
+      - dependency-name: "ubuntu"
+  - package-ecosystem: "docker"
+    directory: "/images/victim-web"
+    schedule: { interval: "weekly", day: "monday" }
+    open-pull-requests-limit: 3
+    labels: ["dependencies", "docker"]
+    commit-message: { prefix: "deps(docker)", include: "scope" }
+    ignore:  # pinned (deferred #11, ubuntu 22.04->26.04)
+      - dependency-name: "ubuntu"
+  - package-ecosystem: "docker"
+    directory: "/images/victim-work"
+    schedule: { interval: "weekly", day: "monday" }
+    open-pull-requests-limit: 3
+    labels: ["dependencies", "docker"]
+    commit-message: { prefix: "deps(docker)", include: "scope" }
+    ignore:  # pinned (deferred #13, ubuntu 22.04->26.04)
+      - dependency-name: "ubuntu"
+  - package-ecosystem: "docker"
+    directory: "/images/victim-dc"
+    schedule: { interval: "weekly", day: "monday" }
+    open-pull-requests-limit: 3
+    labels: ["dependencies", "docker"]
+    commit-message: { prefix: "deps(docker)", include: "scope" }
+    ignore:  # pinned (deferred #15, ubuntu 22.04->26.04)
+      - dependency-name: "ubuntu"
+  - package-ecosystem: "docker"
+    directory: "/images/suricata"
+    schedule: { interval: "weekly", day: "monday" }
+    open-pull-requests-limit: 3
+    labels: ["dependencies", "docker"]
+    commit-message: { prefix: "deps(docker)", include: "scope" }
+    ignore:  # pinned (deferred #12, ubuntu 22.04->26.04)
+      - dependency-name: "ubuntu"
+  - package-ecosystem: "docker"
+    directory: "/images/attacker"
+    schedule: { interval: "weekly", day: "monday" }
+    open-pull-requests-limit: 3
+    labels: ["dependencies", "docker"]
+    commit-message: { prefix: "deps(docker)", include: "scope" }
+    ignore:  # pinned (deferred #16, debian 12->13-slim)
+      - dependency-name: "debian"
+  - package-ecosystem: "docker"
+    directory: "/images/noise-gen"
+    schedule: { interval: "weekly", day: "monday" }
+    open-pull-requests-limit: 3
+    labels: ["dependencies", "docker"]
+    commit-message: { prefix: "deps(docker)", include: "scope" }
+    ignore:  # pinned (deferred #17, debian 12->13-slim)
+      - dependency-name: "debian"
+  # ── Docker: iris-certs-generator (Phase 2; alpine base, normal bumps;
+  #    NOT frozen — no Wazuh-decoder log-determinism constraint) ───────
+  - package-ecosystem: "docker"
+    directory: "/images/iris-certs-generator"
+    schedule: { interval: "weekly", day: "monday" }
+    open-pull-requests-limit: 3
+    labels: ["dependencies", "docker"]
+    commit-message: { prefix: "deps(docker)", include: "scope" }
+  # ── Docker: wazuh-to-iris watcher (Phase 2; python-slim base,
+  #    normal bumps; NOT frozen) ──────────────────────────────────────
+  - package-ecosystem: "docker"
+    directory: "/images/wazuh-to-iris"
+    schedule: { interval: "weekly", day: "monday" }
+    open-pull-requests-limit: 3
+    labels: ["dependencies", "docker"]
+    commit-message: { prefix: "deps(docker)", include: "scope" }
+  # ── Docker: additional images added in Phase 1 ─────────────────────
+  # Claude Code: when you add Dockerfile directories during Phase 1
+  # (e.g., /images/vic-jump, /images/vic-web, /images/atk-kali,
+  # /images/noise-gen, /images/vic-dc), append matching entries here.
+  # Pattern:
+  #
+  # - package-ecosystem: "docker"
+  #   directory: "/images/<name>"
+  #   schedule:
+  #     interval: "weekly"
+  #     day: "monday"
+  #   open-pull-requests-limit: 3
+  #   labels:
+  #     - "dependencies"
+  #     - "docker"
+  #   commit-message:
+  #     prefix: "deps(docker)"
+  #     include: "scope"

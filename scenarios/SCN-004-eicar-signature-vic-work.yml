@@ -1,0 +1,96 @@
+schema_version: "1.0"
+id: SCN-004
+name: "Known-malware signature detected on vic-work"
+description: >
+  Wazuh raised a malware-signature alert for the workstation vic-work
+  after it repeatedly retrieved a file matching a known-malware test
+  signature from an internal web host. Triage and disposition.
+author: "Wachturm Contributors"
+created: 2026-05-18
+difficulty: easy
+category: execution
+expected_verdict: true_positive
+mitre:
+  - T1105
+duration_minutes: 3
+tags: [malware, eicar, endpoint, beginner]
+
+setup:
+  - actor: vic-web
+    # EICAR is the industry-standard SAFE antivirus test string (NOT
+    # real malware — the only sanctioned malicious-file artifact in this
+    # lab). Hosting it on the internal web root lets a victim "download
+    # malware" with zero risk. The exact 68-byte EICAR string:
+    command: 'printf %s ''X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*'' > /var/www/html/eicar.com'
+    description: "Host the EICAR test file on the internal web server"
+
+steps:
+  - actor: vic-work
+    description: "Workstation repeatedly retrieves the known-malware test file"
+    # The workstation pulls the known-malware test file. SUSTAINED ~90s
+    # (a retrying fetch) — the SCN-010 lesson: a single request can race
+    # the freshly-built lab's logcollector tail-start on the vic-web
+    # access.log and be missed; a sustained retrieval is robust and is
+    # realistic of malware that re-fetches.
+    command: >-
+      sh -c 'for i in $(seq 1 30); do
+      curl -s -o /tmp/eicar.com "http://10.50.10.10/eicar.com" 2>/dev/null
+      || wget -q -O /tmp/eicar.com "http://10.50.10.10/eicar.com" 2>/dev/null;
+      sleep 3; done; echo done'
+    delay_seconds: 0
+    timeout_seconds: 150
+
+# vic-web's nginx access.log records each GET /eicar.com; Wazuh decodes
+# it (PROVEN web-accesslog decoder, gate-verified by SCN-010) and the
+# Wachturm local rule 100400 (config/wazuh/local_rules.xml,
+# decoded_as web-accesslog + url~eicar) raises the malware-signature
+# alert. The always-on watcher (level >=3, carries data.srcip = the
+# downloading host + agent vic-web) opens the IRIS case.
+expected_alerts:
+  - rule_id: 100400
+    description: "Known-malware test file (EICAR) retrieved over HTTP"
+    minimum_count: 3
+    timeframe_seconds: 240
+
+expected_observables:
+  - type: ip
+    value: "10.50.10.20"
+  - type: hostname
+    value: "vic-web"
+
+hints:
+  - "What rule fired, and what file was being requested? Look at the URL in the alert and the host that requested it."
+  - "The file is the EICAR string — look it up. Is EICAR real malware, and does 'it's only a test file' mean you can close this?"
+  - "A workstation reaching out and pulling a known-malware-signature file is a real indicator even at low severity. What do you do with a low-severity true positive — dismiss it, or escalate and check the endpoint?"
+
+answer_key:
+  verdict: true_positive
+  severity: low
+  confidence: high
+  required_observables:
+    - type: ip
+      value: "10.50.10.20"
+      role: source
+    - type: hostname
+      value: "vic-web"
+      role: observed
+  summary_keywords:
+    - any_of: ["eicar", "known malware", "known-malware", "malware signature", "test malware", "malware"]
+    - any_of: ["escalate", "do not dismiss", "investigate the endpoint", "true positive", "not benign", "retrieved"]
+  next_steps:
+    - isolate_endpoint
+    - scan_workstation
+    - escalate_t2
+  reasoning: >
+    The workstation vic-work (10.50.10.20) repeatedly retrieved a file
+    whose contents are the EICAR known-malware test signature from the
+    internal web host. EICAR is harmless by design, but a host pulling a
+    file that matches a known-malware signature is a real positive
+    indicator, not noise: the rule did not misfire, and "it's only a
+    test file" is exactly the rationalization that lets a real
+    low-and-slow malware stager through. Correct verdict: true positive,
+    low severity (the artifact itself is inert / would be blocked by a
+    real AV), high confidence (EICAR is unambiguous). Disposition:
+    isolate/scan vic-work, escalate to Tier 2 to determine why the
+    workstation fetched it and whether anything else was retrieved —
+    escalate, do not dismiss on severity.

@@ -1,0 +1,87 @@
+schema_version: "1.0"
+id: SCN-017
+name: "Periodic outbound beaconing pattern — vic-work"
+description: >
+  Suricata raised a beaconing-pattern alert for the workstation
+  vic-work: repeated, regular-interval outbound connections to a single
+  external endpoint. Triage and disposition.
+author: "Wachturm Contributors"
+created: 2026-05-18
+category: misconfigured_tool
+expected_verdict: false_positive
+# No mitre block: this is a legitimate cloud agent's heartbeat that
+# trips a behavioural beacon heuristic — the verdict the student
+# reaches by verifying the documented allowlist, not from the alert.
+difficulty: medium
+duration_minutes: 2
+tags: [network, suricata, beacon, false-positive, medium]
+
+# Synthetic Suricata EVE (sealed lab; same approved model as SCN-007 —
+# bridge-sidecar Suricata cannot capture, emit the alert the simulated
+# traffic would produce). Several emissions == the periodic beacon.
+steps:
+  - actor: suricata
+    description: "NIDS flags a periodic outbound beacon from vic-work"
+    # SUSTAINED ~120s (SCN-010/SCN-007-proven): a fresh lab's Wazuh
+    # logcollector takes a startup window to settle on eve.json; a
+    # single burst is missed. A sustained loop also literally IS the
+    # "periodic beacon" this scenario is about.
+    command: >-
+      sh -c 'for i in $(seq 1 24); do
+      wachturm-emit-eve --src 10.50.10.20 --dest 203.0.113.200
+      --dest-port 443 --proto TCP --severity 2 --count 1 --app-proto tls
+      --category "Potentially Bad Traffic"
+      --signature "ET POLICY Possible Periodic Beaconing Activity Observed"
+      --sid 2400001; sleep 5; done'
+    delay_seconds: 0
+    timeout_seconds: 180
+
+expected_alerts:
+  - rule_id: 86601
+    description: "Suricata: Alert - periodic beaconing pattern"
+    minimum_count: 1
+    timeframe_seconds: 240
+
+expected_observables:
+  - type: ip
+    value: "203.0.113.200"
+  - type: ip
+    value: "10.50.10.20"
+
+hints:
+  - "Read the signature: is this a known-bad destination, or a behavioural heuristic (regular-interval pattern)? Those are different strengths of evidence."
+  - "Where does 203.0.113.200 go? Check it against your asset/SaaS allowlist and egress documentation before deciding what the regularity means."
+  - "Beaconing regularity also describes legitimate agent heartbeats (EDR, monitoring, cloud sync). If the destination is a documented, allowlisted endpoint, what is this alert?"
+
+answer_key:
+  verdict: false_positive
+  severity: low
+  confidence: medium
+  required_observables:
+    - type: ip
+      value: "203.0.113.200"
+      role: destination
+    - type: ip
+      value: "10.50.10.20"
+      role: source
+  summary_keywords:
+    - any_of: ["beacon", "beaconing", "heartbeat", "periodic", "regular interval", "cloud agent"]
+    - any_of: ["false positive", "documented", "allowlisted", "legitimate", "expected", "not c2", "benign saas"]
+  next_steps:
+    - document_allowlist
+    - tune_rule
+    - close_false_positive
+  reasoning: >
+    Suricata's beacon heuristic fired on regular-interval outbound from
+    vic-work (10.50.10.20) to 203.0.113.200:443. The signature is a
+    *behavioural* heuristic ("possible periodic beaconing"), not a
+    known-bad-destination hit — strength-of-evidence matters. Checking
+    the destination against the egress/SaaS allowlist shows it is a
+    documented, approved cloud-agent endpoint whose heartbeat is
+    periodic by design. "Looks like C2" (regular beacon) is not "is C2":
+    this is a false positive — the rule fired on legitimate, documented
+    activity. Correct disposition: document/confirm the allowlist entry,
+    consider tuning the heuristic to suppress the known endpoint, close
+    as false positive. Severity low, confidence medium (the FP rests on
+    the allowlist being authoritative; a beacon to an *undocumented*
+    endpoint would flip this immediately).

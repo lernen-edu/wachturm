@@ -1,0 +1,105 @@
+schema_version: "1.0"
+id: SCN-010
+name: "Web-application attack pattern against /login — vic-web"
+description: >
+  Wazuh raised web-attack rules on the public web host vic-web: a rapid
+  series of HTTP requests to /login from a single source carrying
+  SQL-injection-style payloads, with a scanner-like User-Agent. Triage
+  and disposition.
+author: "Wachturm Contributors"
+created: 2026-05-18
+difficulty: easy
+category: initial_access
+expected_verdict: true_positive
+mitre:
+  - T1190
+  - T1595.002
+duration_minutes: 3
+tags: [web, sqli, scanner, beginner]
+
+steps:
+  - actor: atk-kali
+    description: "Confirm the web service is reachable"
+    command: "curl -s -o /dev/null -w '%{http_code}\\n' http://10.50.10.10/"
+    delay_seconds: 0
+    timeout_seconds: 20
+
+  - actor: atk-kali
+    description: "Automated SQL-injection wave against /login (sqlmap-style UA)"
+    # ~120 requests (two payload families: boolean + UNION) SUSTAINED
+    # over ~120s — a realistic commodity-scanner run, and deliberately
+    # long enough to be robust on a freshly-built lab: the victim's
+    # Wazuh logcollector starts *tailing* /var/log/nginx/access.log
+    # tens of seconds after the agent connects (P3a: a 20s burst raced
+    # that and only the tail end was decoded). A sustained wave keeps
+    # producing loggable requests well past logcollector readiness.
+    # vic-web is static nginx (404s); Wazuh's web-accesslog ruleset
+    # fires 31103 per injection + 31152 "multiple from same source"
+    # (real ids verified live, NOT the schema-example 31164/31106).
+    command: >-
+      sh -c 'for i in $(seq 1 60); do
+      curl -s -o /dev/null -A "sqlmap/1.7.2#stable"
+      "http://10.50.10.10/login?username=admin%27%20OR%20%271%27%3D%271--&password=x";
+      curl -s -o /dev/null -A "sqlmap/1.7.2#stable"
+      "http://10.50.10.10/login?id=1%20UNION%20SELECT%20username,password%20FROM%20users--";
+      sleep 2; done'
+    delay_seconds: 5
+    timeout_seconds: 180
+
+# Real ids observed live (decoder web-accesslog), NOT assumed. 31152
+# ("multiple SQL injection attempts from same source") is the meaningful
+# lab-integrity assertion — it only fires once Wazuh has correlated
+# several 31103s from the one source, i.e. it proves the *wave* was
+# seen. 31101 ("400 error") also fires but is generic and not asserted.
+expected_alerts:
+  - rule_id: 31103
+    description: "SQL injection attempt"
+    minimum_count: 3
+    timeframe_seconds: 240
+  - rule_id: 31152
+    description: "Multiple SQL injection attempts from same source"
+    minimum_count: 1
+    timeframe_seconds: 240
+
+expected_observables:
+  - type: ip
+    value: "10.50.10.250"
+  - type: hostname
+    value: "vic-web"
+
+hints:
+  - "Start in the Wazuh alerts queue — which rule fired on vic-web, and what does its description say the requests looked like?"
+  - "Open the alert detail and read the request URIs and the User-Agent. How many requests came from the one source, and over how short a window?"
+  - "Hundreds of injection payloads fired at a login endpoint by a tool is not a user mistake or a misconfiguration — how should deliberate exploitation activity against an exposed service be dispositioned, even when you cannot confirm it succeeded?"
+
+answer_key:
+  verdict: true_positive
+  severity: medium
+  confidence: high
+  required_observables:
+    - type: ip
+      value: "10.50.10.250"
+      role: source
+    - type: hostname
+      value: "vic-web"
+      role: target
+  required_enrichment:
+    - observable_type: ip
+      analyzer: AbuseIPDB
+      required: false
+  summary_keywords:
+    - any_of: ["sql injection", "sqli", "sql-injection"]
+    - any_of: ["scanner", "automated", "attack", "exploitation"]
+  next_steps:
+    - block_source_ip
+    - review_web_logs
+    - escalate_t2
+  reasoning: >
+    A single source IP firing a rapid burst of SQL-injection payloads at
+    the /login endpoint with a sqlmap-style User-Agent is automated
+    exploitation activity against an internet-facing service — a true
+    positive. It is deliberate and hostile regardless of whether the
+    injection succeeded (vic-web is static, so it did not), so it is
+    escalated and the source blocked rather than closed. Severity is
+    medium: a real attack attempt with no evidence of successful
+    compromise; confidence is high because the signature is unambiguous.

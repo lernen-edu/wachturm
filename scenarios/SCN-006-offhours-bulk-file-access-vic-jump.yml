@@ -1,0 +1,111 @@
+schema_version: "1.0"
+id: SCN-006
+name: "Off-hours bulk file access by an unfamiliar service account — vic-jump"
+description: >
+  Wazuh logged an off-hours SSH login to vic-jump for an unfamiliar
+  service account, followed by a session that enumerated and archived a
+  large number of files. No failed-auth burst preceded it. Triage and
+  disposition.
+author: "Wachturm Contributors"
+created: 2026-05-18
+category: misconfigured_tool
+expected_verdict: false_positive
+# No mitre block: this is a newly-deployed, documented backup tool's
+# sanctioned bulk read — the verdict the student reaches by verifying
+# the backup-tool / service-account documentation, not from the
+# scary-looking session.
+difficulty: easy
+duration_minutes: 3
+tags: [ssh, backup, false-positive, beginner]
+
+setup:
+  - actor: vic-jump
+    # svc-backup: scenario-owned service account (NOT analyst/admin/
+    # bobsmith/breakglass/jdoe/awilson/mwong — owned by noise-gen/
+    # SCN-001/003/011/012/021/034; account-exclusion contract,
+    # images/noise-gen/README.md). A few files give it something to read.
+    command: "id svc-backup >/dev/null 2>&1 || useradd -m -s /bin/bash svc-backup; echo 'svc-backup:B@ckup-Svc-7!' | chpasswd; mkdir -p /srv/data && for f in a b c d e; do echo data-$f > /srv/data/$f.dat; done"
+    description: "Ensure the 'svc-backup' service account and some data exist"
+
+steps:
+  - actor: atk-kali
+    # atk-kali is the lab's only SSH client; narratively the host the
+    # newly-deployed backup tool runs on. A CLEAN login (no brute force)
+    # — same 5715 success signal as SCN-034/011/012; the verdict turns
+    # on verifying the backup-tool documentation, not the volume.
+    description: "Off-hours login by the backup service account (clean)"
+    command: "sshpass -p 'B@ckup-Svc-7!' ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=8 svc-backup@10.50.10.30 'true'"
+    delay_seconds: 0
+    timeout_seconds: 30
+
+  - actor: atk-kali
+    # Bulk file enumeration + archive — exactly what a backup tool does,
+    # and exactly what exfil-prep / ransomware-recon also looks like.
+    # That ambiguity is the scenario; the documentation resolves it.
+    description: "Session enumerates and archives many files"
+    command: "sshpass -p 'B@ckup-Svc-7!' ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null svc-backup@10.50.10.30 'find /srv /home -type f 2>/dev/null | head -50; du -sh /srv /home 2>/dev/null; tar -cf /tmp/backup.tar /srv/data 2>/dev/null; ls -l /tmp/backup.tar; true'"
+    delay_seconds: 6
+    timeout_seconds: 30
+
+# Proven Linux auth path (SCN-034/011/012): the clean SSH success fires
+# 5715 ("sshd: authentication success"); NO 5760/5763/40112. The
+# always-on watcher turns the 5715 alert (level >=3, srcip + host +
+# user) into the IRIS case. The bulk file activity is post-auth session
+# evidence the analyst weighs against the backup-tool documentation —
+# the rule firing on the tool's sanctioned bulk read is the FP.
+expected_alerts:
+  - rule_id: 5715
+    description: "sshd: authentication success (the backup service login)"
+    minimum_count: 1
+    timeframe_seconds: 240
+
+expected_observables:
+  - type: ip
+    value: "10.50.10.250"
+  - type: hostname
+    value: "vic-jump"
+  - type: user
+    value: "svc-backup"
+
+hints:
+  - "What account is this, and is it in your inventory? A single clean login is not automatically malicious — but bulk file enumeration + archiving is also not automatically benign. What would tell you which this is?"
+  - "Off-hours + unfamiliar account + reading/archiving lots of files looks like exfil prep. It also exactly describes a backup job. Where would you confirm a newly-deployed backup tool and its service account?"
+  - "If the account is the documented backup service, the timing matches the documented backup window, and the files read are the documented backup scope — did the rule catch an attack, or fire on sanctioned tooling?"
+
+answer_key:
+  verdict: false_positive
+  severity: low
+  confidence: medium
+  required_observables:
+    - type: ip
+      value: "10.50.10.250"
+      role: source
+    - type: hostname
+      value: "vic-jump"
+      role: target
+    - type: user
+      value: "svc-backup"
+      role: subject
+  summary_keywords:
+    - any_of: ["backup", "backup tool", "backup job", "service account", "newly deployed", "documented", "scheduled"]
+    - any_of: ["false positive", "legitimate", "sanctioned", "not exfiltration", "verified", "expected", "no compromise"]
+  next_steps:
+    - verify_backup_tooling
+    - document
+    - close_false_positive
+  reasoning: >
+    A clean off-hours SSH success on vic-jump for the unfamiliar
+    'svc-backup' account, followed by bulk file enumeration and
+    archiving. That behaviour is genuinely ambiguous — it is what data
+    exfiltration / ransomware reconnaissance looks like, and it is
+    exactly what a backup tool does. The resolution is not in the
+    session; it is in verifying the documentation: svc-backup is the
+    service account for a newly-deployed (hence unfamiliar) backup tool,
+    the activity matches its documented schedule and scope. The rule
+    fired correctly on legitimate, sanctioned tooling — a false
+    positive. Correct disposition: verify the backup tool/service
+    account in change/asset records, document, close as false positive.
+    Severity low, confidence medium (the FP rests on the documentation
+    being authoritative; the same session by an *undocumented* account
+    would be an exfiltration true positive — the only thing separating
+    this from SCN-011 is the verified legitimacy of the actor).

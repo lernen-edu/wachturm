@@ -1,0 +1,64 @@
+# .github/workflows/codeql.yml
+#
+# Static analysis with GitHub's CodeQL engine. Runs on push to main,
+# every PR targeting main, and weekly to catch new vulnerability signatures
+# applied to existing code.
+#
+# Languages analyzed:
+#   - python: the runner (runner/)
+#   - javascript: the portal landing page (images/portal/html/)
+#
+# When new languages are added to the project (e.g., Go for a future
+# tutor launcher), add them to the matrix below.
+
+name: "CodeQL"
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  schedule:
+    # Weekly on Mondays at 07:00 UTC. Aligns with Dependabot cadence so
+    # security reviews can be done in one sweep.
+    - cron: "0 7 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        language: ["python", "javascript"]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          # Use the security-and-quality query suite for thorough coverage.
+          # Acceptable noise tradeoff for an educational project where
+          # quality issues in example code teach worse habits to students.
+          queries: security-and-quality
+
+      # The Python runner has standard packaging; autobuild handles it.
+      # The portal is static HTML/JS; no build step needed.
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v4
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: "/language:${{ matrix.language }}"

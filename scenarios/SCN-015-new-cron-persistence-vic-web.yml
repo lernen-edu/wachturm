@@ -1,0 +1,83 @@
+schema_version: "1.0"
+id: SCN-015
+name: "New scheduled-task/cron persistence on vic-web"
+description: >
+  Wazuh logged a crontab change on the web host vic-web: a new
+  scheduled job installed for a service account. Triage and disposition.
+author: "Wachturm Contributors"
+created: 2026-05-18
+category: benign_admin
+expected_verdict: false_positive
+# No mitre block: this is a documented CI/CD pipeline change that trips
+# a persistence detector — the verdict the student reaches by finding
+# the change/deployment ticket, not from the cron-change alert.
+difficulty: medium
+duration_minutes: 2
+tags: [persistence, cron, ci-cd, false-positive, medium]
+
+# vic-web runs no cron/rsyslog and its agent does not tail a cron log
+# (probe-verified), so — same accepted synthetic-source model as the
+# Suricata emit-eve / SCN-004 EICAR path — the scenario emits the
+# crontab-change SYSLOG line the real CI/CD cron install would have
+# produced into /var/log/dpkg.log (a localfile vic-web's agent already
+# tails as log_format=syslog). Wazuh's BUILT-IN rule 2832 "Crontab
+# entry changed" (level 5, T1053.003, deterministic single-event — NOT
+# a correlation) fires on it (wazuh-logtest verified). Emitted several
+# times over ~70s so it lands after the fresh-lab logcollector settles
+# (the recurring SCN-010 robustness point); 2832 has no frequency
+# threshold so each line is an independent alert.
+steps:
+  - actor: vic-web
+    description: "CI/CD pipeline installs a new cron job (logged as a crontab change)"
+    command: >-
+      sh -c 'for i in $(seq 1 8); do
+      printf "%s vic-web crontab[%s]: (deploy) REPLACE (deploy)\n"
+      "$(date "+%b %e %T")" "$$" >> /var/log/dpkg.log;
+      sleep 8; done'
+    delay_seconds: 0
+    timeout_seconds: 120
+
+expected_alerts:
+  - rule_id: 2832
+    description: "Crontab entry changed"
+    minimum_count: 1
+    timeframe_seconds: 240
+
+expected_observables:
+  - type: hostname
+    value: "vic-web"
+
+hints:
+  - "What changed, on which host, and for which account? A new cron job is a classic persistence mechanism — but who or what legitimately installs scheduled jobs?"
+  - "The account is `deploy`. Where would a scheduled-job change made by a deployment account be recorded — is there a change or CI/CD pipeline ticket for this host and time?"
+  - "If a current CI/CD / change record covers this exact scheduled-job change by the deployment account, did the rule catch an attacker establishing persistence, or fire on a documented pipeline action?"
+
+answer_key:
+  verdict: false_positive
+  severity: low
+  confidence: medium
+  required_observables:
+    - type: hostname
+      value: "vic-web"
+      role: target
+  summary_keywords:
+    - any_of: ["cron", "crontab", "scheduled job", "scheduled task", "persistence"]
+    - any_of: ["false positive", "documented", "ci/cd", "pipeline", "deployment", "change ticket", "authorized", "expected"]
+  next_steps:
+    - verify_change_ticket
+    - document
+    - close_false_positive
+  reasoning: >
+    Wazuh rule 2832 flagged a crontab change on vic-web for the `deploy`
+    account. A new scheduled job is a textbook persistence technique
+    (T1053.003), so the alert is correct to fire — but persistence
+    mechanisms are also exactly how CI/CD pipelines install scheduled
+    work. The resolution is verification: a current CI/CD / change
+    record covers this scheduled-job change, made by the deployment
+    service account, on this host, at this time. The detector fired on
+    a documented, sanctioned pipeline action — a false positive.
+    Correct disposition: verify the change/CI-CD ticket, document, close
+    as false positive. Severity low, confidence medium (the FP rests on
+    the change record being authoritative; the same crontab change with
+    no covering ticket — or for a non-deployment user — would be a
+    persistence true positive, exactly as in SCN-021's Stage 3).

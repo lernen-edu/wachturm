@@ -1,0 +1,84 @@
+schema_version: "1.0"
+id: SCN-023
+name: "Anomalous DNS query volume — vic-work"
+description: >
+  Suricata raised a DNS-anomaly alert for the workstation vic-work:
+  a sustained, low-rate stream of DNS queries to a single external
+  domain over a long window. Triage and disposition.
+author: "Wachturm Contributors"
+created: 2026-05-18
+category: exfiltration
+expected_verdict: true_positive
+mitre:
+  - T1048.003
+  - T1071.004
+difficulty: hard
+duration_minutes: 3
+tags: [network, suricata, dns, exfiltration, advanced]
+
+# Synthetic Suricata EVE (sealed lab; approved model). The sustained
+# loop is BOTH the fresh-lab logcollector-settle robustness pattern
+# (SCN-010/007-proven) AND, pedagogically, the low-and-slow exfil
+# itself: many small queries spread over time, not one loud burst.
+steps:
+  - actor: suricata
+    description: "NIDS flags a sustained low-rate DNS stream from vic-work"
+    command: >-
+      sh -c 'for i in $(seq 1 30); do
+      wachturm-emit-eve --src 10.50.10.20 --dest 203.0.113.53
+      --dest-port 53 --proto UDP --severity 1 --count 1 --app-proto dns
+      --category "A Network Trojan was detected"
+      --signature "ET TROJAN Possible DNS Tunneling Outbound Data Exfiltration"
+      --sid 2610001; sleep 4; done'
+    delay_seconds: 0
+    timeout_seconds: 180
+
+expected_alerts:
+  - rule_id: 86601
+    description: "Suricata: Alert - possible DNS tunneling / exfiltration"
+    minimum_count: 1
+    timeframe_seconds: 240
+
+expected_observables:
+  - type: ip
+    value: "10.50.10.20"
+  - type: ip
+    value: "203.0.113.53"
+
+hints:
+  - "One DNS query is nothing. Look at the pattern over time — rate, regularity, and the single destination domain. What is the shape of this traffic telling you?"
+  - "DNS is allowed outbound almost everywhere. What technique abuses exactly that to move data, and what would it look like — loud, or low-and-slow?"
+  - "Sustained, low-rate, single-destination DNS that the NIDS calls tunneling/exfiltration, from a workstation: weigh the cumulative pattern, not the single query. What verdict does data leaving over DNS get?"
+
+answer_key:
+  verdict: true_positive
+  severity: high
+  confidence: medium
+  required_observables:
+    - type: ip
+      value: "10.50.10.20"
+      role: source
+    - type: ip
+      value: "203.0.113.53"
+      role: destination
+  summary_keywords:
+    - any_of: ["dns tunneling", "dns exfiltration", "dns exfil", "data exfiltration", "low-and-slow", "anomalous dns"]
+    - any_of: ["exfiltration", "compromise", "c2", "escalate", "contain", "data loss"]
+  next_steps:
+    - contain_host
+    - block_domain
+    - escalate_t2
+  reasoning: >
+    Individually each DNS query is unremarkable — which is the point of
+    DNS tunneling/exfiltration. The verdict requires statistical /
+    time-window thinking: a sustained, low-rate, single-destination DNS
+    stream from a workstation, which Suricata flags as possible
+    tunneling/exfiltration, is the classic low-and-slow data-exfil
+    channel (DNS is almost always allowed outbound, so attackers abuse
+    it). True positive. Severity high (probable active data loss /
+    established covert channel); confidence medium (the lab shows the
+    pattern and the NIDS verdict; full confirmation needs payload/volume
+    analysis Tier 2 would do — Tier 1 should still escalate and contain,
+    not wait for certainty). Disposition: contain vic-work, block the
+    destination domain/resolver path, escalate to Tier 2 to scope what
+    and how much left.

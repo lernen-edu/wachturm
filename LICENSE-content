@@ -1,0 +1,59 @@
+Creative Commons Attribution-ShareAlike 4.0 International (CC BY-SA 4.0)
+
+Wachturm scenarios, briefs, instructor companion documents, and other
+documentation (collectively, "the Content") are licensed under the
+Creative Commons Attribution-ShareAlike 4.0 International License.
+
+The full legal text of this license is available at:
+
+    https://creativecommons.org/licenses/by-sa/4.0/legalcode.en
+
+A human-readable summary (which is not a substitute for the license) is at:
+
+    https://creativecommons.org/licenses/by-sa/4.0/
+
+In short, You are free to:
+
+  * Share — copy and redistribute the Content in any medium or format
+  * Adapt — remix, transform, and build upon the Content for any purpose,
+    even commercially.
+
+Under the following terms:
+
+  * Attribution — You must give appropriate credit, provide a link to the
+    license, and indicate if changes were made. You may do so in any
+    reasonable manner, but not in any way that suggests the licensor
+    endorses you or your use.
+
+  * ShareAlike — If you remix, transform, or build upon the Content, you
+    must distribute your contributions under the same license as the
+    original.
+
+  * No additional restrictions — You may not apply legal terms or
+    technological measures that legally restrict others from doing
+    anything the license permits.
+
+Attribution format:
+
+    "<scenario or document title>" by <author(s)>, from the Wachturm
+    project (https://github.com/<org>/wachturm), licensed under CC BY-SA
+    4.0.
+
+This license applies ONLY to:
+
+  * All files under scenarios/ (scenario YAML specs, briefs, instructor
+    docs, scenario templates).
+  * All files under docs/.
+  * All markdown documentation files in the repository root that describe
+    Wachturm itself (PRD.md, ARCHITECTURE.md, BUILD_ORDER.md,
+    SCENARIO_SCHEMA.md, AGENTS.md, README.md, THIRD_PARTY.md, this file).
+
+Wachturm's code (the Python runner, Compose files, Dockerfiles, nginx
+configurations, portal HTML/CSS/JS, and all other code in this repository)
+is licensed separately under the Apache License 2.0. See LICENSE.
+
+Third-party components pulled at runtime (Wazuh, Suricata, DFIR-IRIS,
+Cortex, Shuffle, MISP, etc.) remain under their respective licenses. See
+THIRD_PARTY.md for the full dependency audit.
+
+Copyright (c) 2026 Wachturm Contributors.

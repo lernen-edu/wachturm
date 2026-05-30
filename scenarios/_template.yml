@@ -1,0 +1,91 @@
+# scenarios/_template.yml
+#
+# Wachturm scenario specification — copy this file to start a new
+# scenario. This template conforms to the LOCKED schema in
+# SCENARIO_SCHEMA.md §2–§9, whose canonical implementation is the
+# Pydantic model in runner/src/wachturm/scenario.py (SCENARIO_SCHEMA
+# §10: if the doc and the model disagree, the model wins). Validate
+# with `wachturm validate scenarios/SCN-NNN-*.yml` before writing the
+# brief/instructor docs. Use the scenario-author skill
+# (skills/scenario-author/SKILL.md) for the end-to-end workflow.
+
+schema_version: "1.0"            # required. Locked at "1.0".
+id: SCN-NNN                      # required. Format SCN-NNN (3 digits), unique.
+name: "Short Human-Readable Name"  # required.
+description: >                   # required. 1–3 sentence summary.
+  One to three sentences describing what this scenario simulates.
+author: "Wachturm Contributors"  # required (CC BY-SA attribution).
+created: 2026-01-01              # required. ISO 8601 date.
+difficulty: easy                 # required. One of: easy, medium, hard.
+category: credential_access      # required. See SCENARIO_SCHEMA §3.
+expected_verdict: true_positive  # required. true_positive | false_positive | benign.
+mitre:                           # required IFF expected_verdict == true_positive.
+  - T1110.001                    # Format: Txxxx or Txxxx.yyy.
+duration_minutes: 5              # required. Approx wall-clock to run.
+tags: [example]                  # optional, free-form.
+# requires: [extra-tool]         # optional. Extra tools the attacker needs.
+
+# Optional one-time, idempotent pre-conditions (SCENARIO_SCHEMA §8).
+setup:
+  - actor: vic-jump
+    command: "id alice >/dev/null 2>&1 || useradd -m alice"
+    description: "Ensure the target account exists"
+
+# The actions the runner executes, in order (SCENARIO_SCHEMA §4).
+# `via` defaults to direct; ssh/rce_sim require `from`. Use realistic
+# delay_seconds — real attackers don't chain everything in one second.
+steps:
+  - actor: atk-kali
+    description: "Confirm the service is reachable"
+    command: "nmap -Pn -p 22 10.50.10.30"
+    delay_seconds: 0
+    timeout_seconds: 30
+  - actor: atk-kali
+    description: "The attack action"
+    command: "true"
+    delay_seconds: 5
+    timeout_seconds: 60
+    # via: ssh           # direct (default) | ssh | rce_sim
+    # from: atk-kali     # required when via != direct
+    # as_user: alice     # run as this user (default: container default)
+    # expect_failure: false
+
+# What Wazuh SHOULD emit when this runs cleanly — lab-integrity check,
+# NOT student grading (SCENARIO_SCHEMA §5). Use the REAL rule IDs you
+# observe in the lab, not assumed ones.
+expected_alerts:
+  - rule_id: 5760
+    description: "sshd: authentication failed"
+    minimum_count: 1
+    timeframe_seconds: 180
+
+# IoCs that should appear in IRIS cases (optional).
+expected_observables:
+  - type: ip
+    value: "10.50.10.250"
+
+# Progressive hints, plain strings, general -> specific
+# (SCENARIO_SCHEMA §7). Each revealed hint costs auto-score points.
+hints:
+  - "A general nudge toward the right data source."
+  - "A more specific pointer."
+  - "Nearly the answer."
+
+# The correct triage outcome the scorer compares against
+# (SCENARIO_SCHEMA §6).
+answer_key:
+  verdict: true_positive         # true_positive | false_positive | benign
+  severity: high                 # low | medium | high | critical
+  confidence: high               # low | medium | high
+  required_observables:
+    - type: ip
+      value: "10.50.10.250"
+      role: source
+  summary_keywords:
+    - any_of: ["keyword", "synonym"]
+  next_steps:
+    - contain_host
+    - escalate_t2
+  reasoning: >
+    Why this is the correct verdict — the evidence chain a competent
+    Tier 1 analyst should articulate.

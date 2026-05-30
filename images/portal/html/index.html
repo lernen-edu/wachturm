@@ -1,0 +1,421 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>WACHTURM — Operations Console</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@500;700;900&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:           #0e1116;
+    --bg-elev:      #161a21;
+    --bg-elev-2:    #1c2029;
+    --border:       #2a2f38;
+    --border-bright: #3a4150;
+    --text:         #e6e6e6;
+    --text-dim:     #8b8f99;
+    --text-faint:   #565a64;
+    --accent:       #ffb627;   /* watchtower amber */
+    --accent-dim:   #8a6213;
+    --ok:           #4ade80;
+    --warn:         #fbbf24;
+    --down:         #ef4444;
+    --offline:      #4a4f59;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 14px;
+    line-height: 1.5;
+    min-height: 100vh;
+  }
+
+  /* Subtle vertical scan-line / watchtower bar texture */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    background-image: repeating-linear-gradient(
+      90deg,
+      transparent 0,
+      transparent 80px,
+      rgba(255,182,39,0.012) 80px,
+      rgba(255,182,39,0.012) 81px
+    );
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .wrap {
+    position: relative;
+    z-index: 1;
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 32px 48px 96px;
+  }
+
+  /* ─── Header ─────────────────────────────────────────────────────── */
+
+  header {
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 24px;
+    margin-bottom: 32px;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: end;
+    gap: 24px;
+  }
+
+  .brand {
+    display: flex;
+    align-items: baseline;
+    gap: 16px;
+  }
+
+  .logo {
+    font-family: "Big Shoulders Display", sans-serif;
+    font-weight: 900;
+    font-size: 64px;
+    letter-spacing: 0.04em;
+    line-height: 0.9;
+    color: var(--text);
+  }
+
+  .logo .accent { color: var(--accent); }
+
+  .tagline {
+    color: var(--text-dim);
+    font-size: 12px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    padding-bottom: 8px;
+  }
+
+  .clock {
+    text-align: right;
+    color: var(--text-dim);
+    font-size: 12px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+
+  .clock .time {
+    color: var(--accent);
+    font-size: 20px;
+    letter-spacing: 0.04em;
+    font-weight: 500;
+    margin-top: 4px;
+  }
+
+  /* ─── Section heading ────────────────────────────────────────────── */
+
+  .section-label {
+    font-family: "Big Shoulders Display", sans-serif;
+    font-weight: 700;
+    font-size: 14px;
+    letter-spacing: 0.24em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+  .section-label::before {
+    content: "";
+    width: 24px; height: 2px;
+    background: var(--accent);
+  }
+  .section-label::after {
+    content: "";
+    flex: 1; height: 1px;
+    background: var(--border);
+  }
+
+  /* ─── Tool grid ──────────────────────────────────────────────────── */
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+    gap: 1px;
+    background: var(--border);
+    border: 1px solid var(--border);
+  }
+
+  .tool {
+    background: var(--bg-elev);
+    padding: 24px 24px 20px;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    grid-template-rows: auto auto auto;
+    gap: 8px 16px;
+    transition: background 0.15s;
+    text-decoration: none;
+    color: inherit;
+    cursor: pointer;
+  }
+  .tool:hover { background: var(--bg-elev-2); }
+  .tool:hover .open-arrow { color: var(--accent); transform: translateX(4px); }
+
+  .tool-name {
+    font-family: "Big Shoulders Display", sans-serif;
+    font-weight: 700;
+    font-size: 28px;
+    letter-spacing: 0.04em;
+    color: var(--text);
+    grid-column: 1;
+  }
+
+  .tool-status {
+    grid-column: 2;
+    grid-row: 1;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+  }
+
+  .dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--offline);
+    box-shadow: 0 0 0 0 transparent;
+  }
+  .dot.ok      { background: var(--ok);      box-shadow: 0 0 8px var(--ok); animation: pulse 2.4s ease-in-out infinite; }
+  .dot.warn    { background: var(--warn);    box-shadow: 0 0 8px var(--warn); }
+  .dot.down    { background: var(--down);    box-shadow: 0 0 8px var(--down); }
+  .dot.offline { background: var(--offline); }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.45; }
+  }
+
+  .tool-role {
+    grid-column: 1 / 3;
+    color: var(--text-dim);
+    font-size: 13px;
+  }
+
+  .tool-meta {
+    grid-column: 1;
+    color: var(--text-faint);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    margin-top: 4px;
+  }
+
+  .open-arrow {
+    grid-column: 2;
+    grid-row: 3;
+    color: var(--text-faint);
+    font-size: 18px;
+    transition: color 0.15s, transform 0.15s;
+    align-self: end;
+  }
+
+  /* ─── Bottom strip ───────────────────────────────────────────────── */
+
+  .strip {
+    margin-top: 48px;
+    display: grid;
+    grid-template-columns: 2fr 1fr 1fr;
+    gap: 1px;
+    background: var(--border);
+    border: 1px solid var(--border);
+  }
+  .strip > div {
+    background: var(--bg-elev);
+    padding: 16px 20px;
+  }
+  .strip .label {
+    color: var(--text-faint);
+    font-size: 10px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+  .strip .value {
+    color: var(--text);
+    font-size: 16px;
+  }
+  .strip .value.accent { color: var(--accent); }
+
+  footer {
+    margin-top: 64px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+    color: var(--text-faint);
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    display: flex;
+    justify-content: space-between;
+  }
+  footer a { color: var(--text-dim); text-decoration: none; }
+  footer a:hover { color: var(--accent); }
+
+  @media (max-width: 720px) {
+    .wrap { padding: 24px; }
+    .logo { font-size: 44px; }
+    header { grid-template-columns: 1fr; }
+    .clock { text-align: left; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="brand">
+      <div class="logo">WACH<span class="accent">TURM</span></div>
+      <div class="tagline">Tier 1 · Operations Console</div>
+    </div>
+    <div class="clock">
+      <div>Local Time</div>
+      <div class="time" id="clock">--:--:--</div>
+    </div>
+  </header>
+
+  <div class="section-label">Stack Status</div>
+
+  <div class="grid" id="grid">
+    <a class="tool" data-tool="wazuh"   data-url="https://localhost:8443">
+      <div class="tool-name">Wazuh</div>
+      <div class="tool-status"><span class="dot offline" id="dot-wazuh"></span><span id="state-wazuh">Checking</span></div>
+      <div class="tool-role">SIEM · EDR · HIDS</div>
+      <div class="tool-meta">localhost:8443</div>
+      <div class="open-arrow">→</div>
+    </a>
+    <a class="tool" data-tool="iris" data-url="https://localhost:9000">
+      <div class="tool-name">DFIR-IRIS</div>
+      <div class="tool-status"><span class="dot offline" id="dot-iris"></span><span id="state-iris">Checking</span></div>
+      <div class="tool-role">Case Management</div>
+      <div class="tool-meta">localhost:9000</div>
+      <div class="open-arrow">→</div>
+    </a>
+    <a class="tool" data-tool="cortex"  data-url="http://localhost:9001">
+      <div class="tool-name">Cortex</div>
+      <div class="tool-status"><span class="dot offline" id="dot-cortex"></span><span id="state-cortex">Checking</span></div>
+      <div class="tool-role">Observable Enrichment</div>
+      <div class="tool-meta">localhost:9001</div>
+      <div class="open-arrow">→</div>
+    </a>
+    <a class="tool" data-tool="shuffle" data-url="http://localhost:3001">
+      <div class="tool-name">Shuffle</div>
+      <div class="tool-status"><span class="dot offline" id="dot-shuffle"></span><span id="state-shuffle">Checking</span></div>
+      <div class="tool-role">SOAR · Playbooks</div>
+      <div class="tool-meta">localhost:3001</div>
+      <div class="open-arrow">→</div>
+    </a>
+    <a class="tool" data-tool="misp"    data-url="http://localhost:8080">
+      <div class="tool-name">MISP</div>
+      <div class="tool-status"><span class="dot offline" id="dot-misp"></span><span id="state-misp">Checking</span></div>
+      <div class="tool-role">Threat Intelligence</div>
+      <div class="tool-meta">localhost:8080</div>
+      <div class="open-arrow">→</div>
+    </a>
+  </div>
+
+  <div class="section-label" style="margin-top:48px">Shift Status</div>
+
+  <div class="strip">
+    <div>
+      <div class="label">Current Scenario</div>
+      <div class="value" id="scn-name">— none active —</div>
+    </div>
+    <div>
+      <div class="label">Elapsed</div>
+      <div class="value accent" id="scn-elapsed">—</div>
+    </div>
+    <div>
+      <div class="label">Last Score</div>
+      <div class="value" id="last-score">—</div>
+    </div>
+  </div>
+
+  <footer>
+    <div>WACHTURM · Stand watch · Triage · Escalate</div>
+    <div><a href="https://github.com/lernen-edu/wachturm" target="_blank">github</a></div>
+  </footer>
+
+</div>
+
+<script>
+  // ── Clock ───────────────────────────────────────────────────────────
+  const pad = n => String(n).padStart(2, "0");
+  function tick() {
+    const d = new Date();
+    document.getElementById("clock").textContent =
+      `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  }
+  tick(); setInterval(tick, 1000);
+
+  // ── Tool click → open native UI in new tab ──────────────────────────
+  document.querySelectorAll(".tool").forEach(el => {
+    el.addEventListener("click", e => {
+      e.preventDefault();
+      window.open(el.dataset.url, "_blank", "noopener");
+    });
+  });
+
+  // ── Health polling ──────────────────────────────────────────────────
+  const TOOLS = ["wazuh", "iris", "cortex", "shuffle", "misp"];
+  const STATE_LABEL = { ok: "Online", down: "Down", offline: "Not deployed" };
+
+  async function pollOne(name) {
+    const dot   = document.getElementById(`dot-${name}`);
+    const label = document.getElementById(`state-${name}`);
+    try {
+      const ctl = new AbortController();
+      const to  = setTimeout(() => ctl.abort(), 3500);
+      const res = await fetch(`/api/health/${name}`, { signal: ctl.signal, cache: "no-store" });
+      clearTimeout(to);
+
+      if (res.status >= 200 && res.status < 400) {
+        dot.className = "dot ok";    label.textContent = STATE_LABEL.ok;
+      } else if (res.status === 503) {
+        // 503 == nginx @down: the request reached the portal but the
+        // tool's DNS didn't resolve (its profile isn't deployed) or it
+        // didn't answer. In this lab the dominant case is "not deployed"
+        // (e.g. core-only: iris/cortex/shuffle/misp absent), so surface
+        // it as such — matches the DoD ("other tools as Not deployed").
+        dot.className = "dot offline"; label.textContent = STATE_LABEL.offline;
+      } else {
+        dot.className = "dot warn"; label.textContent = `HTTP ${res.status}`;
+      }
+    } catch (err) {
+      // Resolver failure typically means the container isn't running at all
+      dot.className = "dot offline"; label.textContent = STATE_LABEL.offline;
+    }
+  }
+
+  async function pollAll() {
+    for (const t of TOOLS) pollOne(t);
+  }
+  pollAll(); setInterval(pollAll, 5000);
+
+  // ── Scenario state (Phase 3+) ───────────────────────────────────────
+  async function pollState() {
+    try {
+      const res = await fetch("/api/state", { cache: "no-store" });
+      if (!res.ok) return;
+      const s = await res.json();
+      if (s.scenario)  document.getElementById("scn-name").textContent    = s.scenario;
+      if (s.elapsed)   document.getElementById("scn-elapsed").textContent = s.elapsed;
+      if (s.lastScore) document.getElementById("last-score").textContent  = s.lastScore;
+    } catch (_) { /* state file may not exist yet */ }
+  }
+  pollState(); setInterval(pollState, 3000);
+</script>
+</body>
+</html>

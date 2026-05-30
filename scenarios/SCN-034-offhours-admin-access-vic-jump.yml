@@ -1,0 +1,107 @@
+schema_version: "1.0"
+id: SCN-034
+name: "Off-hours administrative remote access — vic-jump"
+description: >
+  Wazuh logged a successful off-hours SSH login to the jump host
+  vic-jump for an unfamiliar privileged account from a single source,
+  followed by a short series of system-state commands. No other alert
+  groups are associated. Triage and disposition.
+author: "Wachturm Contributors"
+created: 2026-05-18
+difficulty: medium
+category: benign_admin
+expected_verdict: benign
+# No mitre block: this is authorized administrative activity, not
+# adversary behavior (the verdict the student must reach by verifying
+# the documented break-glass procedure — not assume from the alert).
+duration_minutes: 3
+tags: [ssh, benign, admin, break-glass, medium]
+
+setup:
+  - actor: vic-jump
+    # 'breakglass' is a scenario-owned account (NOT 'analyst' — noise-gen
+    # owns that for benign successful-login noise; NOT 'admin'/'bobsmith'
+    # — owned by SCN-001/003. Account-exclusion contract, see
+    # images/noise-gen/README.md).
+    command: "id breakglass >/dev/null 2>&1 || useradd -m -s /bin/bash breakglass; echo 'breakglass:Br3akGlass-2026!' | chpasswd"
+    description: "Ensure the documented break-glass account exists"
+
+steps:
+  - actor: atk-kali
+    # atk-kali is the lab's only SSH-capable client; narratively this is
+    # the on-call admin's access point (shared-source-IP note in the
+    # instructor doc, same convention as SCN-003). A single CLEAN login
+    # — an admin executing a known procedure does not fumble a wordlist.
+    description: "On-call admin connects via the break-glass account (clean login)"
+    command: "sshpass -p 'Br3akGlass-2026!' ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=8 breakglass@10.50.10.30 'true'"
+    delay_seconds: 0
+    timeout_seconds: 30
+
+  - actor: atk-kali
+    # Routine emergency-triage commands — system state, not attacker
+    # recon. No id/sudo -l/wordlists; nothing is exfiltrated or changed.
+    # Benign post-auth activity is load-bearing evidence here.
+    description: "Admin checks system state then disconnects (no changes)"
+    command: "sshpass -p 'Br3akGlass-2026!' ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null breakglass@10.50.10.30 'uptime; df -h; systemctl is-active ssh 2>/dev/null; true'"
+    delay_seconds: 6
+    timeout_seconds: 30
+
+# Observed in the lab (mirrors SCN-003's proven success path): a clean
+# SSH login fires 5715 ("sshd: authentication success"). NO 5760 (no
+# failed attempts), NO 5763/40112 (not a brute force, not a compromise
+# correlation) — their ABSENCE plus the documented procedure is the
+# benign discriminator. The always-on watcher turns the 5715 alert
+# (level >=3, carries srcip + host + user) into the IRIS case.
+expected_alerts:
+  - rule_id: 5715
+    description: "sshd: authentication success (the break-glass login)"
+    minimum_count: 1
+    timeframe_seconds: 240
+
+expected_observables:
+  - type: ip
+    value: "10.50.10.250"
+  - type: hostname
+    value: "vic-jump"
+  - type: user
+    value: "breakglass"
+
+hints:
+  - "Look at the account and the source. Is 'breakglass' in your normal user inventory, and is this a single clean login or a brute-force pattern?"
+  - "Off-hours privileged remote access can be an intruder OR authorized emergency work. What record would distinguish the two, and where in your change/incident management would you look?"
+  - "If a current break-glass or change record matches this account, host, and time window, and the post-login commands are routine system-state checks with no changes — what disposition does verified authorized activity get?"
+
+answer_key:
+  verdict: benign
+  severity: low
+  confidence: medium
+  required_observables:
+    - type: ip
+      value: "10.50.10.250"
+      role: source
+    - type: hostname
+      value: "vic-jump"
+      role: target
+    - type: user
+      value: "breakglass"
+      role: subject
+  summary_keywords:
+    - any_of: ["break-glass", "break glass", "documented", "authorized", "change record", "emergency access", "maintenance"]
+    - any_of: ["benign", "legitimate", "no brute force", "authorized access", "not malicious", "verified"]
+  next_steps:
+    - verify_with_change_management
+    - document
+    - close_benign
+  reasoning: >
+    A single clean SSH login to vic-jump for the privileged 'breakglass'
+    account from one source, off-hours, followed only by routine
+    system-state commands (uptime, df, service status) and no changes,
+    recon, or lateral movement. There is no failed-auth burst (no 5760),
+    no brute-force rule (5763), and no compromise correlation (40112).
+    Once the analyst verifies the matching documented break-glass / change
+    record, this is authorized emergency administration — benign. Correct
+    disposition: verify with change management, document, close benign.
+    Confidence is medium, not high: the benign conclusion depends on the
+    out-of-band documentation being genuine and on the absence of
+    malicious follow-on, which is weaker than a positive indicator —
+    off-hours privileged access always warrants the verification step.

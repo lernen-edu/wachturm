@@ -1,0 +1,83 @@
+schema_version: "1.0"
+id: SCN-008
+name: "Internal port scan across the victim subnet"
+description: >
+  Suricata raised an internal port-scan alert: a single internal host
+  sweeping multiple ports across other hosts on the victim subnet.
+  Triage and disposition.
+author: "Wachturm Contributors"
+created: 2026-05-18
+category: misconfigured_tool
+expected_verdict: false_positive
+# No mitre block: this is a documented internal monitoring scanner —
+# the verdict the student reaches by checking the asset inventory, not
+# from the scan signature.
+difficulty: easy
+duration_minutes: 2
+tags: [network, suricata, scan, false-positive, beginner]
+
+# Synthetic Suricata EVE (sealed lab; approved model). SUSTAINED ~120s:
+# fresh-lab Wazuh logcollector takes a startup window to settle on
+# eve.json (SCN-010/SCN-007-proven) — and a scan is many connections
+# over time anyway.
+steps:
+  - actor: suricata
+    description: "NIDS flags an internal host port-scanning the subnet"
+    command: >-
+      sh -c 'for i in $(seq 1 24); do
+      wachturm-emit-eve --src 10.50.10.5 --dest 10.50.10.20
+      --dest-port 0 --proto TCP --severity 2 --count 1
+      --category "Attempted Information Leak"
+      --signature "ET SCAN Behavioral Internal Port Scan"
+      --sid 2500001; sleep 5; done'
+    delay_seconds: 0
+    timeout_seconds: 180
+
+expected_alerts:
+  - rule_id: 86601
+    description: "Suricata: Alert - internal port scan"
+    minimum_count: 1
+    timeframe_seconds: 240
+
+expected_observables:
+  - type: ip
+    value: "10.50.10.5"
+  - type: ip
+    value: "10.50.10.20"
+
+hints:
+  - "Where is the scan coming FROM? Put the source IP against your asset inventory before you judge the scan itself."
+  - "Port scanning is also exactly what vulnerability scanners and monitoring systems do on a schedule. Is this source a documented internal scanner?"
+  - "If the source is an inventoried, documented monitoring/VA host doing its job on the internal subnet, what is this alert — an attack, or the rule firing on sanctioned activity?"
+
+answer_key:
+  verdict: false_positive
+  severity: low
+  confidence: medium
+  required_observables:
+    - type: ip
+      value: "10.50.10.5"
+      role: source
+    - type: ip
+      value: "10.50.10.20"
+      role: destination
+  summary_keywords:
+    - any_of: ["port scan", "scan", "sweep", "monitoring", "vulnerability scanner", "internal scanner"]
+    - any_of: ["false positive", "documented", "authorized", "allowlisted", "asset inventory", "sanctioned", "expected"]
+  next_steps:
+    - document_scanner
+    - allowlist_source
+    - close_false_positive
+  reasoning: >
+    Suricata flagged an internal port sweep from 10.50.10.5 across the
+    victim subnet (e.g., 10.50.10.20). Port scanning is equally the
+    signature of a monitoring/vulnerability-management system doing its
+    scheduled job. Checking the source against the asset inventory
+    shows 10.50.10.5 is the documented internal monitoring host;
+    scanning the subnet is its sanctioned function. The rule fired
+    correctly on legitimate, documented activity — a false positive.
+    Correct disposition: document/confirm the scanner in the inventory,
+    allowlist or tune for the known source, close as false positive.
+    Severity low, confidence medium (rests on the inventory being
+    authoritative — a sweep from an *undocumented* internal host would
+    flip this to a true positive lateral-movement concern immediately).
