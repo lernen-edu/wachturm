@@ -10,7 +10,7 @@
 # volume; the manager ingests it (Wazuh ships Suricata decoders/rules).
 FROM ubuntu:22.04
 
-ARG SURICATA_VERSION=1:8.0.4-0ubuntu1
+ARG SURICATA_VERSION=1:8.0.5-0ubuntu2
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update \

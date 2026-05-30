@@ -23,6 +23,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Notes
 - This Unreleased section accumulates work-in-progress changes between releases. Each `v*` tag moves entries from Unreleased into a numbered section below.
 
+## [0.9.6] — public evaluation pre-release
+
+### Fixed
+- Suricata image pinned to `1:8.0.5-0ubuntu2` (was `1:8.0.4-0ubuntu1`). The 8.0.4 package was removed from the OISF PPA for Ubuntu 22.04 arm64, breaking `make up-casemgmt` with a version-not-found error.
+
 ## [0.9.5] — public evaluation pre-release
 
 ### Fixed
