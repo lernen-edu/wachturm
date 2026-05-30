@@ -2,8 +2,8 @@
 # Wazuh Docker Copyright (C) 2017, Wazuh Inc. (License GPLv2)
 #
 # Wachturm offline variant of the official wazuh-certs-generator:0.0.2
-# /entrypoint.sh. There are exactly TWO Wachturm deviations, both ABOVE
-# the "upstream-verbatim" marker below:
+# /entrypoint.sh. There are THREE Wachturm deviations, all ABOVE the
+# "upstream-verbatim" marker below:
 #   1. Tool acquisition: upstream curls wazuh-certs-tool.sh from
 #      packages.wazuh.com at runtime — impossible on Wachturm's sealed
 #      internal:true networks. We vendor that exact pinned tool at
@@ -12,8 +12,16 @@
 #      (aborts exit 1 if its working dir exists), which would break a
 #      repeated `make up`. We skip generation when a complete cert set
 #      already exists. See the guard block for the full rationale.
+#   3. root-ca-manager copy moved before chmod: the upstream flow copies
+#      root-ca-manager.{pem,key} AFTER chmod -R 500 /certificates. On
+#      Linux native Docker, container root bypasses the mode bit. On
+#      macOS via Colima/virtiofs the chmod propagates to the host
+#      filesystem and the copy silently fails, leaving root-ca-manager.pem
+#      absent and blocking make up-casemgmt. We move the copy before the
+#      chmod and restore write permission before overwriting any prior
+#      partial cert set.
 # EVERYTHING BELOW the upstream-verbatim marker is Wazuh's official
-# cert-generation flow — do not edit it.
+# cert-generation flow, except for deviation 3 in the copy/chmod block.
 
 CERT_TOOL=wazuh-certs-tool.sh
 
@@ -54,6 +62,11 @@ echo "Wachturm: cert set absent/incomplete — generating fresh."
 # Upstream `-A` aborts if its internal working dir survived a prior
 # crashed run; clear it so the upstream-verbatim flow runs clean.
 [ -d /wazuh-certificates ] && rm -rf /wazuh-certificates
+# On macOS/Colima virtiofs bind mounts, chmod from a prior run
+# propagates to the host and leaves the directory and files non-writable.
+# Reset to writable before attempting to overwrite any partial cert set.
+chmod u+w /certificates 2>/dev/null || true
+chmod u+w /certificates/* 2>/dev/null || true
 
 # ----- upstream-verbatim from here down (official 0.0.2 lines 31-61) -----
 cp /config/certs.yml /config.yml
@@ -71,14 +84,16 @@ node_names=($nodes_server)
 
 echo "Moving created certificates to the destination directory"
 cp /wazuh-certificates/* /certificates/
+# Deviation 3: copy root-ca-manager aliases BEFORE chmod so the write
+# succeeds on macOS/Colima virtiofs bind mounts (see header comment).
+echo "Setting UID for wazuh manager and worker"
+cp /certificates/root-ca.pem /certificates/root-ca-manager.pem
+cp /certificates/root-ca.key /certificates/root-ca-manager.key
 echo "Changing certificate permissions"
 chmod -R 500 /certificates
 chmod -R 400 /certificates/*
 echo "Setting UID indexer and dashboard"
 chown 1000:1000 /certificates/*
-echo "Setting UID for wazuh manager and worker"
-cp /certificates/root-ca.pem /certificates/root-ca-manager.pem
-cp /certificates/root-ca.key /certificates/root-ca-manager.key
 chown 999:999 /certificates/root-ca-manager.pem
 chown 999:999 /certificates/root-ca-manager.key
 

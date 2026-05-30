@@ -23,6 +23,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Notes
 - This Unreleased section accumulates work-in-progress changes between releases. Each `v*` tag moves entries from Unreleased into a numbered section below.
 
+## [0.9.8] — public evaluation pre-release
+
+### Fixed
+- `make up-casemgmt` failed with `permission denied` on `root-ca-manager.pem` on macOS/Colima. The cert generator's `chmod -R 500 /certificates` propagated to the virtiofs bind mount on the host, making the directory non-writable before the `root-ca-manager.{pem,key}` copies. Fixed by moving those copies before the chmod and adding a write-permission reset at the start of any re-generation.
+
 ## [0.9.7] — public evaluation pre-release
 
 ### Fixed
