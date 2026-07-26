@@ -23,6 +23,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Notes
 - This Unreleased section accumulates work-in-progress changes between releases. Each `v*` tag moves entries from Unreleased into a numbered section below.
 
+## [0.9.12] — public evaluation pre-release
+
+### Added
+- `make reset-cortex` — surgically wipes ONLY Cortex state (both `cortex-es-data` and `cortex-data` volumes + the cached service token), preserving IRIS case work and Wazuh data. Supported recovery for a wedged Cortex bootstrap, far less destructive than `make reset`.
+
+### Fixed
+- Cortex bootstrap now emits an actionable error when Cortex has users but no usable Wachturm superadmin (init window closed) — pointing at `make reset-cortex && make up-casemgmt` instead of an opaque `HTTP 401: Authentication failure`. This happens when leftover user state from a previous/partial run closes Cortex's one-time superadmin init window.
+
 ## [0.9.11] — public evaluation pre-release
 
 ### Fixed
