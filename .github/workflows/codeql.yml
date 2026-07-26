@@ -58,7 +58,105 @@ jobs:
       - name: Autobuild
         uses: github/codeql-action/autobuild@v4
 
+      # Uploading to Code Scanning requires GitHub Advanced Security, which is
+      # not enabled on the private source repo (GHAS is a paid add-on for
+      # private repositories). This same file ships to the public mirror via
+      # release/public-manifest.yml, so the behaviour is selected at runtime
+      # rather than by maintaining two divergent workflows:
+      #
+      #   public mirror (lernen-edu/wachturm)  -> upload, alerts land in the
+      #                                           Security tab as normal
+      #   private source (this repo)           -> analyse only, then gate in
+      #                                           CI on the SARIF below
+      #
+      # Analysis itself is free on private repos; only the upload is gated.
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v4
         with:
           category: "/language:${{ matrix.language }}"
+          output: sarif-results
+          upload: ${{ github.repository == 'lernen-edu/wachturm' && 'always' || 'never' }}
+
+      # Stands in for the Security tab on the private repo. Fails the job on
+      # SECURITY findings only. The query suite is `security-and-quality`, and
+      # quality rules (maintainability, style) are intentionally non-blocking:
+      # gating on those would keep main permanently red for non-security
+      # reasons, which is exactly the failure mode this whole change is
+      # undoing. Quality findings are still printed for visibility.
+      - name: Gate on CodeQL security findings
+        if: github.repository != 'lernen-edu/wachturm'
+        run: |
+          python3 - <<'PY'
+          import glob, json, sys
+
+          security, quality = [], []
+          files = glob.glob("sarif-results/**/*.sarif", recursive=True)
+          if not files:
+              print("::warning::no SARIF produced; cannot gate on CodeQL findings")
+              sys.exit(0)
+
+          for path in files:
+              with open(path) as fh:
+                  doc = json.load(fh)
+              for run in doc.get("runs", []):
+                  rules = {}
+                  driver = run.get("tool", {}).get("driver", {})
+                  for rule in driver.get("rules", []):
+                      rules[rule.get("id")] = rule
+                  for ext in run.get("tool", {}).get("extensions", []):
+                      for rule in ext.get("rules", []):
+                          rules.setdefault(rule.get("id"), rule)
+                  for res in run.get("results", []):
+                      rid = res.get("ruleId", "?")
+                      rule = rules.get(rid, {})
+                      props = rule.get("properties", {}) or {}
+                      tags = props.get("tags", []) or []
+                      is_sec = "security-severity" in props or any(
+                          str(t).startswith("security") for t in tags
+                      )
+                      try:
+                          loc = res["locations"][0]["physicalLocation"]
+                          where = loc["artifactLocation"]["uri"]
+                          line = loc.get("region", {}).get("startLine")
+                          where = f"{where}:{line}" if line else where
+                      except (KeyError, IndexError):
+                          where = "(no location)"
+                      msg = res.get("message", {}).get("text", "").split("\n")[0]
+                      (security if is_sec else quality).append((rid, where, msg))
+
+          # Triage record for findings that have been reviewed and accepted.
+          # Keyed on (rule, file), never on line number, and never on rule
+          # alone -- the same rule in a NEW file must still fail.
+          accepted = set()
+          try:
+              with open(".github/codeql-accepted.json") as fh:
+                  for entry in json.load(fh)["accepted"]:
+                      for p in entry["paths"]:
+                          accepted.add((entry["rule"], p))
+          except FileNotFoundError:
+              pass
+
+          blocking = [(r, w, m) for r, w, m in security if (r, w.rsplit(":", 1)[0]) not in accepted]
+          waived = len(security) - len(blocking)
+
+          print(
+              f"CodeQL: {len(security)} security "
+              f"({waived} accepted, {len(blocking)} blocking), "
+              f"{len(quality)} quality finding(s)"
+          )
+          if quality:
+              print("\n--- quality (non-blocking) ---")
+              for r, w, m in quality:
+                  print(f"  {r}  {w}\n      {m}")
+          if blocking:
+              print("\n--- SECURITY (blocking) ---")
+              for r, w, m in blocking:
+                  print(f"  {r}  {w}\n      {m}")
+                  print(f"::error::CodeQL security finding: {r} {w}")
+              print(
+                  "\nIf this is a reviewed false positive, add it to "
+                  ".github/codeql-accepted.json with a written reason."
+              )
+              sys.exit(1)
+          print("\nNo new security findings.")
+          PY
