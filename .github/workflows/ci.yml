@@ -25,7 +25,7 @@ jobs:
     name: Validate docker compose (deployable profile sets)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Provide .env from template
         run: cp .env.example .env
       # Validate the profile COMBINATIONS the Makefile actually deploys, not
@@ -56,7 +56,7 @@ jobs:
     name: Lint, type-check, test (runner)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
