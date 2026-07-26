@@ -15,7 +15,7 @@
 # (build has network); the container performs NO runtime package fetch,
 # same build-time-fetch / runtime-sealed principle as the Wazuh and
 # Suricata images.
-FROM alpine:3.21
+FROM alpine:3.24
 RUN apk add --no-cache openssl
 COPY --chmod=0755 gen-cert.sh /gen-cert.sh
 ENTRYPOINT ["/gen-cert.sh"]
