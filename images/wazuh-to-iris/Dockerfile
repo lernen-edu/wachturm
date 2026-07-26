@@ -10,7 +10,7 @@
 # see the root .dockerignore). pip install happens at BUILD time only —
 # the runtime is sealed, the same build-time-fetch principle as the
 # other Wachturm-built images (AGENTS.md §1.6).
-FROM python:3.11-slim
+FROM python:3.14-slim
 WORKDIR /app
 COPY runner/ /app/runner/
 RUN pip install --no-cache-dir /app/runner
