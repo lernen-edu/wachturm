@@ -67,7 +67,7 @@ jobs:
     outputs:
       images: ${{ steps.list.outputs.images }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - id: list
         name: Enumerate buildable images
         run: |
@@ -132,7 +132,7 @@ jobs:
         image: ${{ fromJson(needs.discover.outputs.images) }}
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       # context/dockerfile come from docker-compose.yml via the discover job,
       # so images that build from the repo root (wazuh-to-iris) work the same
