@@ -1,0 +1,60 @@
+{
+  "_README": [
+    "Accepted CodeQL security findings for the PRIVATE wachturm-source repo.",
+    "",
+    "The private repo has no GitHub Advanced Security, so there is no Security",
+    "tab in which to triage and dismiss alerts. This file is that triage record,",
+    "in version control and reviewable in a diff.",
+    "",
+    "Each entry suppresses a (rule, file) PAIR -- deliberately not the rule",
+    "globally. The same rule appearing in a NEW file still fails the build, so",
+    "this cannot silently absorb a future regression.",
+    "",
+    "The public mirror (lernen-edu/wachturm) does not consult this file: it",
+    "uploads to Code Scanning and these are triaged in the Security tab there.",
+    "",
+    "Line numbers are intentionally NOT recorded -- they churn on every edit.",
+    "Adding an entry requires a reason. If you cannot write one, fix the code."
+  ],
+
+  "accepted": [
+    {
+      "rule": "py/request-without-cert-validation",
+      "paths": [
+        "runner/src/wachturm/integrations/iris.py",
+        "runner/src/wachturm/scoring.py",
+        "tools/triage_as_key.py"
+      ],
+      "reason": [
+        "Wachturm is a sealed loopback lab. iris-nginx serves a self-signed",
+        "certificate and is reachable only on https://127.0.0.1:9000, so there",
+        "is no CA to validate against and no network path for a MITM. This is",
+        "the documented design -- see the open_iris_client docstring in",
+        "integrations/iris.py, which states it verbatim -- and the same call",
+        "already carries a `# noqa: S501` suppressing ruff's equivalent rule.",
+        "CodeQL is reporting the single deliberate `verify=False` on line 122",
+        "of iris.py, fanned out across every call site that reaches it.",
+        "",
+        "Revisit if Wachturm ever talks to a non-loopback host: at that point",
+        "verification must be re-enabled rather than this entry widened."
+      ]
+    },
+    {
+      "rule": "py/overly-permissive-file",
+      "paths": [
+        "runner/src/wachturm/cli.py"
+      ],
+      "reason": [
+        "`os.chmod(tmp, 0o644)` on a mkstemp file that is immediately",
+        "`docker cp`-ed into the portal container, which must be able to read",
+        "it. The content is lab progress state (scenario id, step status) --",
+        "no credentials or student PII -- and the file is unlinked right after",
+        "the copy.",
+        "",
+        "Weakest entry in this file: the window where it is world-readable in",
+        "/tmp is real, just low-value. Worth tightening to a 0700 parent dir",
+        "rather than a 0644 file if this code is touched again."
+      ]
+    }
+  ]
+}

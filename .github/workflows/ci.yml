@@ -22,17 +22,33 @@ permissions:
 
 jobs:
   compose:
-    name: Validate docker compose (all profiles)
+    name: Validate docker compose (deployable profile sets)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - name: Provide .env from template
         run: cp .env.example .env
-      - name: Validate each profile
+      # Validate the profile COMBINATIONS the Makefile actually deploys, not
+      # each profile in isolation. `casemgmt` is never brought up alone --
+      # `make up-casemgmt` runs `--profile core --profile casemgmt`, because
+      # wazuh-to-iris is a bridge service that depends on iris-nginx
+      # (casemgmt) AND wazuh-manager (core). Validating casemgmt on its own
+      # asserts a configuration the project does not support, and fails with
+      # `depends on undefined service "wazuh-manager"`.
+      - name: Validate each deployable profile set
         run: |
-          for profile in core casemgmt soar intel; do
-            echo "::group::docker compose --profile $profile config"
-            docker compose --profile "$profile" config -q
+          set -euo pipefail
+          # Keep in sync with the Makefile: up / up-casemgmt / reset.
+          sets=(
+            "core"
+            "core casemgmt"
+            "core casemgmt soar intel"
+          )
+          for set_ in "${sets[@]}"; do
+            args=()
+            for p in $set_; do args+=(--profile "$p"); done
+            echo "::group::docker compose ${args[*]} config"
+            docker compose "${args[@]}" config -q
             echo "::endgroup::"
           done
 

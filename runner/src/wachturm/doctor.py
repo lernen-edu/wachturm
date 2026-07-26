@@ -69,10 +69,16 @@ def _is_wsl() -> bool:
 def _compose_fix_hint() -> None:
     if sys.platform == "darwin":
         print("      Fix: mkdir -p ~/.docker/cli-plugins && \\")
-        print("           ln -sf /usr/local/cli-plugins/docker-compose ~/.docker/cli-plugins/docker-compose")
+        print(
+            "           ln -sf /usr/local/cli-plugins/docker-compose "
+            "~/.docker/cli-plugins/docker-compose"
+        )
         print("      Or:  brew install docker-compose")
     elif _is_wsl():
-        print("      Fix: enable WSL integration in Docker Desktop (Settings → Resources → WSL Integration)")
+        print(
+            "      Fix: enable WSL integration in Docker Desktop "
+            "(Settings → Resources → WSL Integration)"
+        )
     else:
         print("      Fix: sudo apt-get install docker-compose-plugin   # Debian/Ubuntu")
         print("           See https://docs.docker.com/compose/install/ for other distros")
@@ -81,9 +87,15 @@ def _compose_fix_hint() -> None:
 def _buildx_fix_hint() -> None:
     if sys.platform == "darwin":
         print("      Fix: brew install docker-buildx && \\")
-        print("           ln -sf /opt/homebrew/opt/docker-buildx/bin/docker-buildx ~/.docker/cli-plugins/docker-buildx")
+        print(
+            "           ln -sf /opt/homebrew/opt/docker-buildx/bin/docker-buildx "
+            "~/.docker/cli-plugins/docker-buildx"
+        )
     elif _is_wsl():
-        print("      Fix: enable WSL integration in Docker Desktop (Settings → Resources → WSL Integration)")
+        print(
+            "      Fix: enable WSL integration in Docker Desktop "
+            "(Settings → Resources → WSL Integration)"
+        )
     else:
         print("      Fix: sudo apt-get install docker-buildx-plugin   # Debian/Ubuntu")
         print("           Or upgrade to Docker Engine 23+ which includes buildx")
@@ -94,7 +106,9 @@ def _daemon_fix_hint() -> None:
         if _run(["colima", "status"]) is None:
             print("FAIL  Docker daemon not reachable. Colima is not running.")
             print("      Fix: colima start")
-            print("      For core+casemgmt (~12 GiB needed): colima stop && colima start --memory 14")
+            print(
+                "      For core+casemgmt (~12 GiB needed): colima stop && colima start --memory 14"
+            )
         else:
             print("FAIL  Docker daemon not reachable (Colima is running — socket path mismatch?).")
     elif _is_wsl():
@@ -141,7 +155,9 @@ def run() -> int:
             if raw and raw.isdigit():
                 dmem = _to_gib(int(raw))
                 if dmem < 12:
-                    print(f"WARN  Docker memory: {dmem} GiB allocated (core+casemgmt needs ~12 GiB).")
+                    print(
+                        f"WARN  Docker memory: {dmem} GiB allocated (core+casemgmt needs ~12 GiB)."
+                    )
                     _memory_fix_hint()
                 else:
                     print(f"OK    Docker memory: {dmem} GiB")
@@ -158,7 +174,9 @@ def run() -> int:
         elif re.search(r"(?:^|\s)v?2\.", compose_ver):
             print(f"OK    Compose (standalone v2): {compose_ver}")
         else:
-            print(f"WARN  Compose (standalone): {compose_ver} — looks like v1; upgrade recommended.")
+            print(
+                f"WARN  Compose (standalone): {compose_ver} — looks like v1; upgrade recommended."
+            )
 
     buildx_ver = _run(["docker", "buildx", "version"])
     if buildx_ver is not None:
