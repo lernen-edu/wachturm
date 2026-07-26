@@ -20,15 +20,25 @@
 #      (e.g. a tool we install, our local_rules.xml) → fix it.
 #
 #   2. The "Upload SARIF" step. It posts to GitHub code scanning, which
-#      requires GitHub Advanced Security. On the PRIVATE wachturm-source
-#      repo (lernen-edu free plan) GHAS is unavailable, so this step
-#      ERRORS and the job shows red — this is the known plan limitation,
-#      NOT a vulnerability. It resolves automatically on the PUBLIC
-#      wachturm repo (free GHAS for public) when images land at v1.0.0.
+#      requires GitHub Advanced Security. The private wachturm-source repo
+#      does not have GHAS, so the upload is now SKIPPED there by an
+#      `if:` on github.repository, and findings are summarised into the
+#      job log instead. The public mirror still uploads normally.
 #
-# Net: a red container-scan on wachturm-source is expected and is the
-# SARIF-upload/GHAS gate, not a security regression. Verify which of the
-# two it is before treating any run as a real problem.
+# A red container-scan is therefore a real problem again — it is no
+# longer masked by an expected GHAS failure. Two long-standing bugs that
+# made every run red regardless of image content were fixed at the same
+# time as the upload gate:
+#
+#   - the SARIF output path was `trivy-wachturm/<name>.sarif`, built from
+#     the slash-containing image tag, so Trivy tried to write into a
+#     directory that did not exist and ALL 11 scans died with
+#     "no such file or directory"
+#   - the build context was assumed to be ./images/<name>, which is wrong
+#     for wazuh-to-iris (it COPYs runner/ and builds from the repo root),
+#     so that image failed with `"/runner": not found`. Context and
+#     dockerfile are now read from docker-compose.yml, keeping this job
+#     and `docker compose build` in agreement by construction.
 
 name: Container scan
 
@@ -59,18 +69,60 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - id: list
-        name: Enumerate Dockerfile directories
+        name: Enumerate buildable images
         run: |
           # Each subdirectory of images/ containing a Dockerfile is a
-          # buildable image. Emit as JSON for matrix consumption.
-          IMAGES=$(find images -mindepth 2 -maxdepth 2 -name Dockerfile \
-                    | sed 's|/Dockerfile||' \
-                    | jq -R -s -c 'split("\n") | map(select(length > 0))')
-          echo "images=$IMAGES" >> "$GITHUB_OUTPUT"
-          echo "Found images: $IMAGES"
+          # buildable image. The build CONTEXT is taken from
+          # docker-compose.yml rather than assumed to be the image
+          # directory: wazuh-to-iris builds from the repo root (its
+          # Dockerfile COPYs runner/), so assuming ./images/<name> made it
+          # fail with `"/runner": not found` on every run.
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, os, yaml
+
+          with open("docker-compose.yml") as fh:
+              compose = yaml.safe_load(fh)
+
+          # dockerfile path -> {context, dockerfile}, as compose declares it
+          by_dockerfile = {}
+          for svc in (compose.get("services") or {}).values():
+              build = svc.get("build")
+              if not build:
+                  continue
+              if isinstance(build, str):
+                  ctx, dockerfile = build, os.path.join(build, "Dockerfile")
+              else:
+                  ctx = build.get("context", ".")
+                  dockerfile = build.get("dockerfile", "Dockerfile")
+                  if not os.path.isabs(dockerfile) and not dockerfile.startswith(ctx.rstrip("/")):
+                      dockerfile = os.path.join(ctx, dockerfile)
+              by_dockerfile[os.path.normpath(dockerfile)] = (os.path.normpath(ctx), os.path.normpath(dockerfile))
+
+          images = []
+          for entry in sorted(os.listdir("images")):
+              dockerfile = os.path.join("images", entry, "Dockerfile")
+              if not os.path.isfile(dockerfile):
+                  continue
+              ctx, df = by_dockerfile.get(
+                  os.path.normpath(dockerfile),
+                  (os.path.join("images", entry), dockerfile),
+              )
+              images.append({
+                  # slug is filename-safe: it feeds the SARIF path and the
+                  # code-scanning category, neither of which may contain "/".
+                  "slug": entry,
+                  "tag": f"wachturm/{entry}",
+                  "context": ctx,
+                  "dockerfile": df,
+              })
+
+          print("images=" + json.dumps(images))
+          PY
+          echo "Discovered:"; jq -r '.[] | "  \(.slug): context=\(.context) dockerfile=\(.dockerfile)"' \
+            <<<"$(grep '^images=' "$GITHUB_OUTPUT" | tail -1 | cut -d= -f2-)"
 
   scan:
-    name: Scan ${{ matrix.image }}
+    name: Scan ${{ matrix.image.slug }}
     needs: discover
     runs-on: ubuntu-latest
     if: ${{ needs.discover.outputs.images != '[]' }}
@@ -82,34 +134,50 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Set image tag
-        id: tag
-        run: |
-          NAME=$(basename "${{ matrix.image }}")
-          echo "name=wachturm/$NAME" >> "$GITHUB_OUTPUT"
-          echo "tag=wachturm/$NAME:scan-${{ github.sha }}" >> "$GITHUB_OUTPUT"
-
+      # context/dockerfile come from docker-compose.yml via the discover job,
+      # so images that build from the repo root (wazuh-to-iris) work the same
+      # way here as they do under `docker compose build`.
       - name: Build image
         uses: docker/build-push-action@v7
         with:
-          context: ./${{ matrix.image }}
+          context: ${{ matrix.image.context }}
+          file: ${{ matrix.image.dockerfile }}
           push: false
           load: true
-          tags: ${{ steps.tag.outputs.tag }}
+          tags: ${{ matrix.image.tag }}:scan-${{ github.sha }}
 
       - name: Run Trivy
         uses: aquasecurity/trivy-action@master
         with:
-          image-ref: ${{ steps.tag.outputs.tag }}
+          image-ref: ${{ matrix.image.tag }}:scan-${{ github.sha }}
           format: sarif
-          output: trivy-${{ steps.tag.outputs.name }}.sarif
+          # matrix.image.slug, NOT the wachturm/-prefixed tag: the tag
+          # contains a "/", so the old `trivy-wachturm/<name>.sarif` asked
+          # Trivy to write into a directory that does not exist. That single
+          # character failed all 11 scans on every run.
+          output: trivy-${{ matrix.image.slug }}.sarif
           severity: "CRITICAL,HIGH"
           ignore-unfixed: true   # don't fail on CVEs with no upstream fix
           exit-code: "0"         # report findings, don't fail the job
 
+      # Code scanning upload needs Advanced Security, which the private
+      # source repo does not have. Same runtime switch as codeql.yml: the
+      # public mirror uploads, the private source surfaces findings in the
+      # job log instead. See codeql.yml for the full rationale.
       - name: Upload SARIF
         uses: github/codeql-action/upload-sarif@v4
-        if: always()
+        if: ${{ always() && github.repository == 'lernen-edu/wachturm' }}
         with:
-          sarif_file: trivy-${{ steps.tag.outputs.name }}.sarif
-          category: "trivy-${{ steps.tag.outputs.name }}"
+          sarif_file: trivy-${{ matrix.image.slug }}.sarif
+          category: "trivy-${{ matrix.image.slug }}"
+
+      - name: Summarise findings (no code scanning UI on private source)
+        if: ${{ always() && github.repository != 'lernen-edu/wachturm' }}
+        run: |
+          f="trivy-${{ matrix.image.slug }}.sarif"
+          [ -f "$f" ] || { echo "no SARIF produced for ${{ matrix.image.slug }}"; exit 0; }
+          n=$(jq '[.runs[].results[]?] | length' "$f")
+          echo "${{ matrix.image.slug }}: $n CRITICAL/HIGH fixable finding(s)"
+          # Informational only, matching the triage policy in this file's
+          # header: base-image CVEs we cannot patch must not gate the build.
+          jq -r '.runs[].results[]? | "  \(.ruleId): \(.message.text | split("\n")[0])"' "$f" | head -40
