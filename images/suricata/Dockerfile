@@ -10,7 +10,16 @@
 # volume; the manager ingests it (Wazuh ships Suricata decoders/rules).
 FROM ubuntu:22.04
 
-ARG SURICATA_VERSION=1:8.0.5-0ubuntu2
+# NOTE: a Launchpad PPA keeps only the LATEST build per series, so an exact
+# pin here goes stale the moment OISF publishes a new one -- apt then fails
+# with `Version '<pinned>' for 'suricata' was not found` and the whole core
+# profile stops building. When that happens, bump this to the current jammy
+# version (ubuntu:22.04 == jammy) rather than unpinning:
+#
+#   curl -sL https://ppa.launchpadcontent.net/oisf/suricata-stable/ubuntu/\
+#   dists/jammy/main/binary-amd64/Packages.gz | gunzip \
+#     | awk '/^Package: suricata$/{f=1} f&&/^Version:/{print $2; exit}'
+ARG SURICATA_VERSION=1:8.0.6-0ubuntu2
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update \
