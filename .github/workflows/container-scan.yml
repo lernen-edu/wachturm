@@ -165,7 +165,7 @@ jobs:
       # public mirror uploads, the private source surfaces findings in the
       # job log instead. See codeql.yml for the full rationale.
       - name: Upload SARIF
-        uses: github/codeql-action/upload-sarif@v4
+        uses: github/codeql-action/upload-sarif@v4.37.4
         if: ${{ always() && github.repository == 'lernen-edu/wachturm' }}
         with:
           sarif_file: trivy-${{ matrix.image.slug }}.sarif
